@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scenario Runner: local macOS/Linux scenario launcher."""
+"""Scenario Runner: local Windows/macOS/Linux scenario launcher."""
 
 from __future__ import annotations
 
@@ -26,8 +26,10 @@ import uuid
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+
+import platform_support as platform
 
 
 APP_VERSION = "0.8.0"
@@ -418,6 +420,8 @@ def runtime_file(base: Path, suffix: str) -> Path:
 def process_alive(pid: int) -> bool:
     if pid <= 1:
         return False
+    if platform.WINDOWS:
+        return platform.process_details(pid) is not None
     try:
         os.kill(pid, 0)
         return True
@@ -430,6 +434,9 @@ def file_pid(path: Path) -> int | None:
         value = int(path.read_text(encoding="utf-8").strip())
         if not process_alive(value):
             return None
+        if platform.WINDOWS:
+            suffix = ".shell.pid" if str(path).endswith(".shell.pid") else ".pid"
+            return windows_worker_pid(Path(str(path)[:-len(suffix)]), expected_pid=value)
         # A stale PID file must never turn an unrelated process into our own.
         result = run(["ps", "-ww", "-p", str(value), "-o", "stat=,command="])
         fields = result.stdout.strip().split(None, 1)
@@ -458,6 +465,8 @@ def file_pid(path: Path) -> int | None:
 
 
 def terminal_script_pid(base: Path) -> int | None:
+    if platform.WINDOWS and sys.platform == "win32":
+        return windows_worker_pid(base) if runtime_file(base, ".terminal.json").exists() else None
     try:
         locator = json.loads(runtime_file(base, ".terminal.json").read_text(encoding="utf-8"))
         script_path = locator.get("script_path")
@@ -582,13 +591,14 @@ def command_for(workspace: dict, spec: dict) -> str:
                 relative = host_bag.relative_to(local_workdir)
             except ValueError as exc:
                 raise ApiError(409, "Для Docker-цели путь должен находиться внутри её каталога на хосте") from exc
-            bag_path = str(Path(target_workdir) / relative)
+            bag_path = str(PurePosixPath(target_workdir).joinpath(*relative.parts))
         values.update(bag_path=bag_path, bag_folder=bag_path)
     missing = sorted(set(VARIABLE_TOKEN.findall(command)) - values.keys())
     if missing:
         raise ApiError(409, "Заполните переменные в параметрах панели: " + ", ".join(missing))
     # Substitute once: variable contents may contain literal {{other}} text.
-    return VARIABLE_TOKEN.sub(lambda match: shlex.quote(values[match[1]]), command)
+    quote = platform.shell_quote if sys.platform == "win32" and not docker else shlex.quote
+    return VARIABLE_TOKEN.sub(lambda match: quote(values[match[1]]), command)
 
 
 def external_pids(workspace: dict, spec: dict, snapshot: dict | None = None) -> list[int]:
@@ -651,6 +661,12 @@ def step_status(workspace: dict, spec: dict, snapshot: dict | None = None) -> di
         if spec.get("terminal") and not shell_pid:
             recovered = container_terminal_pids(target, prefix, snapshot)
             shell_pid = recovered[0] if recovered else None
+        if sys.platform == "win32" and spec.get("terminal") and not shell_pid:
+            try:
+                locator = json.loads(runtime_file(base, ".terminal.json").read_text(encoding="utf-8"))
+                shell_pid = windows_worker_pid(Path(locator["windows_base"]))
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
     else:
         owned_pid = file_pid(runtime_file(base, ".pid"))
         shell_pid = file_pid(runtime_file(base, ".shell.pid")) or terminal_script_pid(base)
@@ -699,7 +715,87 @@ def terminal_executable() -> str:
     return value
 
 
+def windows_worker_pid(base: Path, expected_pid: int | None = None) -> int | None:
+    try:
+        owner = json.loads(runtime_file(base, ".owner.json").read_text(encoding="utf-8"))
+        descriptor = json.loads(runtime_file(base, ".worker.json").read_text(encoding="utf-8"))
+        pid = owner["pid"]
+        if not isinstance(pid, int) or pid <= 1 or (expected_pid is not None and expected_pid != pid):
+            return None
+        token = owner["token"]
+        if not isinstance(token, str) or not re.fullmatch(r"[a-f0-9]{32}", token) or descriptor["token"] != token:
+            return None
+        details = platform.process_details(pid)
+        if (details and details["created"] == owner["created"]
+                and subprocess.list2cmdline([str(APP_DIR / "windows_runner.py")]) in details["command"]
+                and subprocess.list2cmdline(["--base", str(base), "--token", token]) in details["command"]):
+            return pid
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
+def launch_windows_command(base: Path, command: str, workdir: Path, terminal: bool, title: str = "", source: str = "") -> dict | None:
+    from windows_runner import powershell
+    powershell()  # Fail before recording a pending launch if PowerShell is unavailable.
+    token = uuid.uuid4().hex
+    atomic_json(runtime_file(base, ".worker.json"), {
+        "token": token, "terminal": terminal, "workdir": str(workdir),
+        "command": command, "source": source, "title": title[:140],
+    })
+    if not terminal:
+        script = (
+            "$ErrorActionPreference = 'Stop'\n"
+            "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)\n"
+            "$OutputEncoding = [Console]::OutputEncoding\n"
+            "$global:LASTEXITCODE = 0\n"
+            + "try {\n" + command + "\n"
+            "if (-not $?) { if ($global:LASTEXITCODE) { exit $global:LASTEXITCODE }; exit 1 }; exit $global:LASTEXITCODE\n"
+            "} catch { [Console]::Error.WriteLine($_.ToString()); exit 1 }\n"
+        )
+        runtime_file(base, ".ps1").write_text(script, encoding="utf-8-sig")
+    argv = [sys.executable, "-u", str(APP_DIR / "windows_runner.py"), "--base", str(base), "--token", token]
+    options = {"creationflags": subprocess.CREATE_NEW_CONSOLE} if terminal else platform.detached_options()
+    process = subprocess.Popen(argv, cwd=APP_DIR, stdin=None if terminal else subprocess.DEVNULL,
+                               stdout=None if terminal else subprocess.DEVNULL,
+                               stderr=None if terminal else subprocess.DEVNULL, **options)
+    try:
+        details = platform.process_details(process.pid)
+        if not details:
+            raise ApiError(500, "Не удалось запустить команду Windows")
+        atomic_json(runtime_file(base, ".owner.json"), {
+            "pid": process.pid, "created": details["created"], "token": token,
+        })
+    except BaseException:
+        if process.poll() is None:
+            process.terminate()
+        process.wait()
+        raise
+    threading.Thread(target=process.wait, daemon=True).start()
+    return {"windows_base": str(base)} if terminal else None
+
+
+def stop_windows_worker(base: Path) -> None:
+    pid = windows_worker_pid(base)
+    if pid:
+        owner = json.loads(runtime_file(base, ".owner.json").read_text(encoding="utf-8"))
+        platform.terminate_process(pid, owner["created"])
+        if windows_worker_pid(base):
+            raise ApiError(500, "Не удалось остановить команду Windows")
+    for suffix in (".pid", ".shell.pid", ".terminal.json"):
+        runtime_file(base, suffix).unlink(missing_ok=True)
+
+
+def host_argv_command(argv: list[str]) -> str:
+    if sys.platform == "win32":
+        return "& " + " ".join(platform.shell_quote(arg) for arg in argv)
+    return shlex.join(argv)
+
+
 def open_terminal(title: str, command: str, hold_on_error: bool = False) -> dict | None:
+    if sys.platform == "win32":
+        base = RUNTIME_DIR / ("terminal-" + uuid.uuid4().hex)
+        return launch_windows_command(base, command, Path.home(), True, title)
     if hold_on_error:
         command = (
             f"{command}; runner_outer_rc=$?; "
@@ -739,7 +835,7 @@ end run'''
 
 
 def remember_terminal(base: Path, locator: dict | None) -> None:
-    if locator and re.fullmatch(r"/dev/ttys\w+", locator.get("tty", "")):
+    if locator and (re.fullmatch(r"/dev/ttys\w+", locator.get("tty", "")) or locator.get("windows_base")):
         atomic_json(runtime_file(base, ".terminal.json"), locator)
 
 
@@ -843,7 +939,7 @@ def launch_step(workspace: dict, step_id: str) -> None:
     command = command_for(workspace, spec)
     terminal = bool(spec.get("terminal", True))
     base = runtime_base(str(workspace["id"]), step_id)
-    for suffix in (".pid", ".shell.pid", ".rc", ".terminal.json"):
+    for suffix in (".pid", ".shell.pid", ".rc", ".terminal.json", ".ready"):
         runtime_file(base, suffix).unlink(missing_ok=True)
     if docker:
         prefix = f"/tmp/scenario-runner-{safe_id(str(workspace['id']))}-{safe_id(step_id)}"
@@ -864,7 +960,7 @@ def launch_step(workspace: dict, step_id: str) -> None:
         )
         if terminal:
             argv = ["docker", "exec", "-it", "-w", target["workdir"], target["container_name"], "bash", "-lc", inner]
-            remember_terminal(base, open_terminal(f"Scenario Runner · {spec['title']}", shlex.join(argv), hold_on_error=True))
+            remember_terminal(base, open_terminal(f"Scenario Runner · {spec['title']}", host_argv_command(argv), hold_on_error=True))
         else:
             background = (
                 f"echo $$ > {shlex.quote(prefix + '.pid')}; trap {shlex.quote('rm -f ' + prefix + '.pid')} EXIT HUP TERM; "
@@ -880,7 +976,11 @@ def launch_step(workspace: dict, step_id: str) -> None:
         source = str(target.get("source_command") or "").strip()
         prepared_command = f"{source} && ( {command} )" if source else command
         pid_file, shell_file, rc_file, log_file = (runtime_file(base, s) for s in (".pid", ".shell.pid", ".rc", ".log"))
-        if terminal:
+        if sys.platform == "win32":
+            prepared_command = (source + "\nif (-not $?) { if ($global:LASTEXITCODE) { exit $global:LASTEXITCODE }; exit 1 }\n" if source else "") + command
+            remember_terminal(base, launch_windows_command(base, command if terminal else prepared_command,
+                                                          workdir, terminal, spec["title"], source=source if terminal else ""))
+        elif terminal:
             cleanup = f"rm -f {shlex.quote(str(pid_file))} {shlex.quote(str(shell_file))}"
             inner = (
                 f"cd {shlex.quote(str(workdir))} || exit 1; echo $$ > {shlex.quote(str(shell_file))}; "
@@ -907,12 +1007,16 @@ def launch_step(workspace: dict, step_id: str) -> None:
 
 
 def descendants(root: int) -> list[int]:
-    result = run(["ps", "-eo", "pid=,ppid="], timeout=3)
     children: dict[int, list[int]] = {}
-    for line in result.stdout.splitlines():
-        values = line.split()
-        if len(values) == 2 and all(value.isdigit() for value in values):
-            children.setdefault(int(values[1]), []).append(int(values[0]))
+    if platform.WINDOWS:
+        for pid, parent in platform.process_parents():
+            children.setdefault(parent, []).append(pid)
+    else:
+        result = run(["ps", "-eo", "pid=,ppid="], timeout=3)
+        for line in result.stdout.splitlines():
+            values = line.split()
+            if len(values) == 2 and all(value.isdigit() for value in values):
+                children.setdefault(int(values[1]), []).append(int(values[0]))
     output: list[int] = []
     def collect(pid: int) -> None:
         if pid in visited:
@@ -943,6 +1047,8 @@ def stop_step(workspace: dict, step_id: str) -> None:
                 raise ApiError(500, result.stderr.strip() or "Не удалось остановить команду в контейнере")
             if container_terminal_pids(target, prefix):
                 raise ApiError(500, "Терминал сценария остался открыт; повторите остановку")
+    elif sys.platform == "win32":
+        stop_windows_worker(base)
     else:
         roots = [file_pid(runtime_file(base, ".pid")), file_pid(runtime_file(base, ".shell.pid")) or terminal_script_pid(base)]
         targets = []
@@ -960,6 +1066,12 @@ def stop_step(workspace: dict, step_id: str) -> None:
         runtime_file(base, ".pid").unlink(missing_ok=True)
         runtime_file(base, ".shell.pid").unlink(missing_ok=True)
     try:
+        if sys.platform == "win32" and runtime_file(base, ".terminal.json").exists():
+            locator = json.loads(runtime_file(base, ".terminal.json").read_text(encoding="utf-8"))
+            candidate = Path(locator.get("windows_base", ""))
+            if candidate.parent == RUNTIME_DIR and re.fullmatch(r"terminal-[a-f0-9]{32}", candidate.name):
+                stop_windows_worker(candidate)
+                runtime_file(base, ".terminal.json").unlink(missing_ok=True)
         close_mac_terminal(base)
     except ApiError:
         workspace["steps"][step_id]["terminal_close_error"] = True

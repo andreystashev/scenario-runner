@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Dependency-free, serialized macOS/Linux server lifecycle."""
+"""Dependency-free, serialized Windows/macOS/Linux server lifecycle."""
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import signal
@@ -15,6 +14,8 @@ import urllib.request
 import uuid
 import webbrowser
 from pathlib import Path
+
+import platform_support as platform
 
 APP_DIR = Path(__file__).resolve().parent
 CACHE_DIR = Path(os.getenv("SCENARIO_RUNNER_CACHE_DIR", "~/.cache/scenario-runner")).expanduser().resolve()
@@ -35,6 +36,11 @@ def owns_process(record):
     pid, token = record.get("pid"), record.get("instance_id")
     if not isinstance(pid, int) or pid <= 1 or not isinstance(token, str) or not token:
         return False
+    if platform.WINDOWS:
+        details = platform.process_details(pid)
+        return bool(details and details["created"] == record.get("created")
+                    and subprocess.list2cmdline([str(APP_DIR / "server.py")]) in details["command"]
+                    and "--instance-id " + token in details["command"])
     result = subprocess.run(["ps", "-ww", "-p", str(pid), "-o", "stat=,command="],
                             capture_output=True, text=True)
     fields = result.stdout.strip().split(None, 1)
@@ -83,9 +89,9 @@ def start(port):
     if owns_process(record):
         old_port = record.get("port")
         if old_port != port:
-            raise RuntimeError(f"Сервер уже запущен на порту {old_port}. Выполните ./stop.sh перед сменой порта.")
+            raise RuntimeError(f"Сервер уже запущен на порту {old_port}. Выполните python launcher.py stop перед сменой порта.")
         if not matches(health(port), record):
-            raise RuntimeError("Запущенный сервер не отвечает. Проверьте журнал или выполните ./stop.sh.")
+            raise RuntimeError("Запущенный сервер не отвечает. Проверьте журнал или выполните python launcher.py stop.")
         show_url(port)
         return
     if health(port):
@@ -95,8 +101,12 @@ def start(port):
         process = subprocess.Popen([sys.executable, "-u", str(APP_DIR / "server.py"), "--host", "127.0.0.1",
                                     "--port", str(port), "--instance-id", token], cwd=APP_DIR,
                                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                                   start_new_session=True, close_fds=True)
+                                   close_fds=True, **platform.detached_options())
     record = {"pid": process.pid, "instance_id": token, "port": port}
+    if platform.WINDOWS:
+        details = platform.process_details(process.pid)
+        if details:
+            record["created"] = details["created"]
     try:
         temporary = RECORD.with_suffix(".tmp")
         temporary.write_text(json.dumps(record) + "\n")
@@ -129,7 +139,10 @@ def start(port):
 def stop():
     record = read_record()
     if owns_process(record):
-        os.kill(record["pid"], signal.SIGTERM)
+        if platform.WINDOWS:
+            platform.terminate_process(record["pid"], record["created"])
+        else:
+            os.kill(record["pid"], signal.SIGTERM)
         deadline = time.monotonic() + 5
         while owns_process(record) and time.monotonic() < deadline:
             time.sleep(.1)
@@ -154,8 +167,7 @@ def main():
         os.execv(sys.executable, [sys.executable, str(APP_DIR / "server.py"), "--host", "127.0.0.1", "--port", str(port)])
     CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     try:
-        with (CACHE_DIR / "launcher.lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+        with platform.exclusive_lock(CACHE_DIR / "launcher.lock"):
             if args.action == "start":
                 start(port)
             else:

@@ -15,6 +15,40 @@ Intel Homebrew installations usually use `/usr/local/bin/python3`. The same opti
 
 Terminal mode uses Terminal.app on macOS and `gnome-terminal` or `x-terminal-emulator` on Linux. Background commands do not need a terminal application. Docker environments require Docker CLI and a running Engine/Desktop; Linux containers need Bash, Python 3, `ps`, and `tee`.
 
+## Windows
+
+Windows 10/11 uses its included Windows PowerShell for local commands; PowerShell 7 is used if Windows PowerShell is unavailable. Python 3.9+ is the only installation required by the application. WSL, Bash, and Node.js are not required to run it.
+
+Start with `.\start.cmd` from PowerShell or double-click `start.cmd` in Explorer. Stop with `.\stop.cmd`. To select a Python interpreter or customize launch options:
+
+```powershell
+$env:SCENARIO_RUNNER_PYTHON = 'C:\Program Files\Python312\python.exe'
+$env:SCENARIO_RUNNER_PORT = '8020'
+$env:SCENARIO_RUNNER_NO_OPEN = '1'
+.\start.cmd
+.\stop.cmd
+python launcher.py start --foreground
+```
+
+Keep the same config/cache environment variables for startup and shutdown. The default settings and logs are in `%USERPROFILE%\.config\scenario-runner` and `%USERPROFILE%\.cache\scenario-runner`, matching the existing directory layout.
+
+Write local commands and the environment setup command in PowerShell syntax. For example:
+
+```powershell
+Get-Location; Write-Output 'Hello from Scenario Runner'
+$env:MODE = 'demo'; & python app.py --port {{port}}
+```
+
+Insert `{{variables}}` without surrounding quotes. Values containing apostrophes, spaces, `$`, backticks, or Unicode remain literal. Background PowerShell runs without a profile; terminal mode loads your normal PowerShell profile. Both apply the environment setup command before the scenario command. Startup scripts use UTF-8 with a BOM for Windows PowerShell compatibility.
+
+Terminal mode opens a dedicated interactive PowerShell console. The scenario command is entered through its normal line editor as a single history entry, including multiline commands. It executes with direct console input/output, so programs receive a real terminal. After completion the same shell remains available: type further commands, recall the scenario command with Up, use Ctrl+C to interrupt a program, or type `exit` to close the window. Enter accepts a command or a blank line; it does not close the terminal. Your working directory, variables, and environment remain available for manual commands. An explicit `exit` in the scenario command closes the shell as it would when entered manually.
+
+The panel records the initial command's completion separately from the open shell; later manual commands do not replace its return code. Terminal logs use PowerShell transcription and include subsequent manual activity. Full-screen programs and some native console output may not be captured by transcription; their console I/O is kept direct. Background output continues to be captured as UTF-8; native background programs should emit UTF-8 for non-ASCII text to appear correctly.
+
+The panel's stop button closes its PowerShell and all processes started in that terminal, including commands entered manually afterward. Background commands have no interactive input. Stopping terminates the Windows command tree through its dedicated supervisor; native programs should not rely on Unix signals for graceful shutdown. Stale runtime records are checked against process creation time and the supervisor command line before stopping a process.
+
+Bash scenario text is not automatically translated to PowerShell. For Linux workflows on Windows, use a Linux Docker environment: commands inside it still use Bash, and container paths remain `/workspace/...` rather than Windows paths. Docker Desktop/Engine and the Docker CLI must be installed separately.
+
 ## Terminal permissions on macOS
 
 The first terminal launch may request permission to control Terminal.app. Allow it in **System Settings → Privacy & Security → Automation** for the application that started the server. A refusal appears as an error; background commands still work.
@@ -60,6 +94,8 @@ Text size, density, opacity, blur, and interface animations are available global
 ## Server lifecycle
 
 Repeated `./start` calls open the same server. Concurrent starts use a file lock. A different service on the requested port is reported as a conflict and is not stopped or treated as Scenario Runner.
+
+The same lifecycle rules apply to `start.cmd` and `stop.cmd` on Windows.
 
 ```bash
 ./start --foreground                  # Visible server output

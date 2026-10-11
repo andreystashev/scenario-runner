@@ -1,9 +1,10 @@
 """Real local processes, with isolated runtime/config and harmless commands."""
 import json
-import fcntl
-import termios
-import pty
 import os
+if os.name != "nt":
+    import fcntl
+    import termios
+    import pty
 import socket
 import select
 import threading
@@ -36,7 +37,7 @@ class ExecutionTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.workspace = {"id": "test", "preset_id": "test", "steps": {}}
         preset = server.normalize_preset({"name": "Test", "steps": [
-            {"id": "one", "command": "printf 'hello from macOS/Linux'; exit 7", "terminal": False}]}, "test")
+            {"id": "one", "command": "echo 'hello from runner'; exit 7", "terminal": False}]}, "test")
         for name, value in {"RUNTIME_DIR": self.root, "settings": server.normalize_settings({"targets": [
                 {"id": "local", "workdir": str(self.root)}]}), "presets": {"test": preset}}.items():
             patcher = patch.object(server, name, value)
@@ -50,7 +51,7 @@ class ExecutionTests(unittest.TestCase):
         state = wait_for(lambda: (s if (s := server.step_status(self.workspace, self.spec)).get("return_code") is not None else None))
         self.assertEqual(state["return_code"], 7)
         self.assertEqual(state["status"], "failed")
-        self.assertIn("hello from macOS/Linux", state["log_tail"])
+        self.assertIn("hello from runner", state["log_tail"])
         self.spec["command"] = "echo recovered"
         server.launch_step(self.workspace, "one")
         state = wait_for(lambda: (s if (s := server.step_status(self.workspace, self.spec)).get("return_code") is not None else None))
@@ -59,22 +60,31 @@ class ExecutionTests(unittest.TestCase):
 
     def test_stop_process_tree_and_leave_unrelated_process(self):
         self.spec["command"] = "sleep 60 & wait"
-        unrelated = subprocess.Popen(["sleep", "60"])
+        if os.name == "nt":
+            self.spec["command"] = server.host_argv_command([sys.executable, "-c",
+                "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); print('child-ready',flush=True); time.sleep(60)"])
+        unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         self.addCleanup(lambda: (unrelated.terminate(), unrelated.wait()) if unrelated.poll() is None else None)
         self.addCleanup(lambda: server.stop_step(self.workspace, "one"))
         server.launch_step(self.workspace, "one")
         wait_for(lambda: server.step_status(self.workspace, self.spec)["owned"])
         root = server.file_pid(server.runtime_file(server.runtime_base("test", "one"), ".pid"))
         children = wait_for(lambda: [pid for pid in server.descendants(root) if pid != root])
+        if os.name == "nt":
+            wait_for(lambda: "child-ready" in server.step_status(self.workspace, self.spec)["log_tail"])
+            children = [pid for pid in server.descendants(root) if pid != root]
         server.stop_step(self.workspace, "one")
         self.assertIsNone(unrelated.poll())
         self.assertFalse(server.step_status(self.workspace, self.spec)["owned"])
         for pid in children:
-            result = server.run(["ps", "-p", str(pid), "-o", "stat="])
-            self.assertTrue(not result.stdout.strip() or result.stdout.strip().startswith("Z"))
+            if os.name == "nt":
+                wait_for(lambda: not server.process_alive(pid))
+            else:
+                result = server.run(["ps", "-p", str(pid), "-o", "stat="])
+                self.assertTrue(not result.stdout.strip() or result.stdout.strip().startswith("Z"))
 
     def test_stale_pid_cannot_own_or_stop_unrelated_process(self):
-        unrelated = subprocess.Popen(["sleep", "60"])
+        unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         self.addCleanup(lambda: (unrelated.terminate(), unrelated.wait()) if unrelated.poll() is None else None)
         path = server.runtime_file(server.runtime_base("test", "one"), ".pid")
         path.write_text(str(unrelated.pid))
@@ -87,6 +97,7 @@ class ExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(server.ApiError, "Рабочая папка"):
             server.launch_step(self.workspace, "one")
 
+    @unittest.skipIf(os.name == "nt", "POSIX PTY integration; Windows console tested separately")
     def test_terminal_wrapper_tracks_live_command_and_shell(self):
         self.spec.update(terminal=True, command="echo terminal-output; sleep 1")
         master, slave = pty.openpty()
@@ -136,6 +147,7 @@ class ExecutionTests(unittest.TestCase):
         self.assertFalse(server.step_status(self.workspace, self.spec)["terminal_open"])
 
 
+    @unittest.skipIf(os.name == "nt", "POSIX terminal adapter")
     def test_pending_launch_cannot_duplicate(self):
         self.spec["terminal"] = True
         with patch.object(server, "open_terminal", return_value=None) as terminal:
@@ -164,6 +176,7 @@ class ExecutionTests(unittest.TestCase):
             with self.assertRaisesRegex(server.ApiError, "Автоматизация"):
                 server.open_terminal("Test", "echo test")
 
+    @unittest.skipIf(os.name == "nt", "macOS terminal lifecycle")
     def test_terminal_close_failure_preserves_locator_and_retry_button(self):
         base = server.runtime_base("test", "one")
         server.remember_terminal(base, {"tty": "/dev/ttys999", "title": "Test [unique]"})
@@ -227,8 +240,12 @@ class LauncherTests(unittest.TestCase):
 
     def test_shell_entrypoints(self):
         env = {**self.env, "SCENARIO_RUNNER_PYTHON": sys.executable}
-        for script in ("start", "start.command", "stop.sh"):
-            result = subprocess.run([str(launcher.APP_DIR / script)], env=env, capture_output=True,
+        scripts = ("start.cmd", "start.cmd", "stop.cmd") if os.name == "nt" else ("start", "start.command", "stop.sh")
+        for script in scripts:
+            argv = [str(launcher.APP_DIR / script)]
+            if os.name == "nt":
+                argv = [os.environ.get("COMSPEC", "cmd.exe"), "/c", *argv]
+            result = subprocess.run(argv, env=env, capture_output=True,
                                     text=True, timeout=15)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -238,7 +255,7 @@ class LauncherTests(unittest.TestCase):
         cache.mkdir()
         (cache / "server.json").write_text(json.dumps({"pid": os.getpid(), "instance_id": "foreign"}))
         self.assertEqual(self.call("stop").returncode, 0)
-        os.kill(os.getpid(), 0)
+        self.assertTrue(server.process_alive(os.getpid()))
 
     def test_occupied_port_does_not_report_success_or_kill_listener(self):
         with socket.socket() as sock:

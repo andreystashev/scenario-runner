@@ -13,15 +13,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ['3.9', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - run: python -m unittest -q
-      - run: python -m py_compile server.py launcher.py
+      - run: python -m py_compile server.py launcher.py platform_support.py windows_runner.py
       - run: bash -n start start.sh stop.sh start.command
-      - run: node --check static/app.js && node --check static/api.js && node --check static/ui-model.js && node --check static/i18n.js && node --check static/appearance.js
-      - run: node --test tests/*.test.mjs
+        shell: bash
+      - run: npm run check
+      - run: npm test
