@@ -106,18 +106,17 @@ function fontStack() {
   return 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 }
 function applyAppearance() {
-  document.body.dataset.theme = appearance.theme;
-  document.body.dataset.density = appearance.density;
-  document.body.dataset.glass = appearance.glass ? "on" : "off";
-  const style = document.documentElement.style,
-    bodyStyle = document.body.style;
+  const style = document.documentElement.style;
   style.setProperty("--font-scale", appearance.fontScale);
   style.setProperty("--panel-opacity", appearance.panelOpacity);
   style.setProperty("--app-font", fontStack());
-  bodyStyle.setProperty("--green", appearance.accent);
-  bodyStyle.setProperty("--bg", appearance.background);
-  bodyStyle.setProperty("--surface", appearance.surface);
-  bodyStyle.setProperty("--text", appearance.text);
+  style.setProperty("--green", appearance.accent);
+  style.setProperty("--bg", appearance.background);
+  style.setProperty("--surface", appearance.surface);
+  style.setProperty("--text", appearance.text);
+  document.body.dataset.theme = appearance.theme;
+  document.body.dataset.density = appearance.density;
+  document.body.dataset.glass = appearance.glass ? "on" : "off";
 }
 function toast(message, error = false) {
   const box = $("#toast");
