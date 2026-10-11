@@ -831,8 +831,15 @@ function colorControl(key, values, changed, inherited = false) {
     const toggle = el("input");
     toggle.type = "checkbox";
     toggle.checked = Boolean(values[key]);
-    const inherit = el("label", "check-row");
-    inherit.append(toggle, el("span", "", t("Custom color")));
+    const inherit = el("label", "switch-row");
+    toggle.setAttribute("role", "switch");
+    const track = el("span", "switch-track");
+    track.setAttribute("aria-hidden", "true");
+    inherit.append(
+      el("span", "switch-label", t("Custom color")),
+      toggle,
+      track,
+    );
     swatch.disabled = hex.disabled = !toggle.checked;
     toggle.onchange = () => {
       if (toggle.checked) values[key] = swatch.value;
@@ -897,10 +904,15 @@ function updateAppearancePreview() {
       ? t("Low text contrast. Choose a lighter or darker text color.")
       : "";
   $("#appearanceCustomFont").disabled = appearance.fontFamily !== "custom";
+  $("#appearanceCustomFont")
+    .closest(".field")
+    .classList.toggle("hidden", appearance.fontFamily !== "custom");
 }
 function populateAppearance() {
   renderColorControls();
   for (const [id, key] of Object.entries({
+    appearanceTheme: "theme",
+    appearanceDensity: "density",
     appearanceFont: "fontFamily",
     appearanceCustomFont: "customFont",
     appearanceFontScale: "fontScale",
@@ -917,18 +929,6 @@ function updateAppearanceLabels() {
     `${Math.round(appearance.fontScale * 100)}%`;
   $("#opacityValue").textContent =
     `${Math.round(appearance.panelOpacity * 100)}%`;
-  for (const [attribute, key] of [
-    ["theme", "theme"],
-    ["density", "density"],
-  ])
-    document
-      .querySelectorAll(`[data-${attribute}-choice]`)
-      .forEach((control) => {
-        const selected =
-          control.dataset[attribute + "Choice"] === appearance[key];
-        control.classList.toggle("active", selected);
-        control.setAttribute("aria-pressed", selected);
-      });
 }
 function showSettingsSection(section) {
   document
@@ -939,7 +939,7 @@ function showSettingsSection(section) {
   document.querySelectorAll("[data-settings-choice]").forEach((control) => {
     const selected = control.dataset.settingsChoice === section;
     control.classList.toggle("active", selected);
-    control.setAttribute("aria-pressed", selected);
+    control.setAttribute("aria-current", selected ? "page" : "false");
   });
 }
 function openSettings() {
@@ -947,7 +947,7 @@ function openSettings() {
   settingsDraft = structuredClone(state.settings);
   appearanceBeforeSettings = structuredClone(appearance);
   populateAppearance();
-  showSettingsSection("appearance");
+  showSettingsSection("general");
   renderTargets();
   showOverlay("#settingsModal");
 }
@@ -1304,23 +1304,14 @@ bindAction("#saveSettings", async () => {
   hideOverlay();
   toast(t("Settings saved"));
 });
-document.querySelectorAll("[data-theme-choice]").forEach(
-  (control) =>
-    (control.onclick = () => {
-      appearance.theme = control.dataset.themeChoice;
-      Object.assign(appearance, palettes[appearance.theme]);
-      populateAppearance();
-    }),
-);
-document.querySelectorAll("[data-density-choice]").forEach(
-  (control) =>
-    (control.onclick = () => {
-      appearance.density = control.dataset.densityChoice;
-      updateAppearancePreview();
-    }),
-);
+$("#appearanceTheme").onchange = (event) => {
+  appearance.theme = event.target.value;
+  Object.assign(appearance, palettes[appearance.theme]);
+  populateAppearance();
+};
 for (const [id, key] of Object.entries({
   appearanceLayout: "layout",
+  appearanceDensity: "density",
   appearanceFont: "fontFamily",
   appearanceCustomFont: "customFont",
 })) {

@@ -30,15 +30,6 @@
         <button class="button primary" id="presetsButton" data-i18n="Scenarios">
           Сценарии
         </button>
-        <select
-          id="languageSelect"
-          class="language-select"
-          aria-label="Язык"
-          data-i18n-aria-label="Language"
-        >
-          <option value="ru">RU</option>
-          <option value="en">EN</option>
-        </select>
         <button
           class="icon-button"
           id="settingsButton"
@@ -309,184 +300,209 @@
             ×
           </button>
         </div>
-        <div
-          class="settings-tabs segmented"
-          aria-label="Settings sections"
-          data-i18n-aria-label="Settings sections"
-        >
-          <button data-settings-choice="appearance" data-i18n="Appearance">
-            Внешний вид
-          </button>
-          <button
-            data-settings-choice="environments"
-            data-i18n="Run environments"
+        <div class="settings-body">
+          <nav
+            class="settings-nav"
+            aria-label="Разделы настроек"
+            data-i18n-aria-label="Settings sections"
           >
-            Среды запуска
-          </button>
-        </div>
-        <div class="settings-section" data-settings-section="appearance">
-          <p
-            class="hint"
-            data-i18n="Defaults for this browser. Preview changes here, then save to apply them."
-          >
-            Общие настройки для этого браузера. Проверьте образец и сохраните
-            изменения.
-          </p>
-          <div class="appearance-workbench">
-            <div class="appearance-options">
-              <h3 data-i18n="Theme">Тема</h3>
-              <div class="theme-choices">
-                <button
-                  class="theme-choice dark-choice"
-                  data-theme-choice="dark"
-                >
-                  <span class="theme-thumbnail" aria-hidden="true"
-                    ><i></i><i></i><i></i></span
-                  ><span data-i18n="Dark">Тёмная</span>
-                </button>
-                <button
-                  class="theme-choice light-choice"
-                  data-theme-choice="light"
-                >
-                  <span class="theme-thumbnail" aria-hidden="true"
-                    ><i></i><i></i><i></i></span
-                  ><span data-i18n="Light">Светлая</span>
-                </button>
-              </div>
-              <details class="disclosure palette-details">
-                <summary data-i18n="Customize colors">Настроить цвета</summary>
-                <div id="appearanceColors" class="color-grid"></div>
-              </details>
-              <h3 class="appearance-subtitle" data-i18n="Layout and text">
-                Отображение и текст
-              </h3>
-              <div class="appearance-grid">
-                <div class="field">
-                  <label data-i18n="Commands layout">Отображение команд</label
-                  ><select id="appearanceLayout">
-                    <option value="grid" data-i18n="Cards">Карточки</option>
-                    <option value="list" data-i18n="List">Список</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label data-i18n="Font">Шрифт</label
-                  ><select id="appearanceFont">
-                    <option value="system" data-i18n="System">Системный</option>
-                    <option value="mono" data-i18n="Monospace">
-                      Моноширинный
-                    </option>
-                    <option value="serif" data-i18n="Serif">С засечками</option>
-                    <option value="custom" data-i18n="Custom">Другой</option>
-                  </select>
-                </div>
-                <div class="field">
-                  <label data-i18n="Custom font name">Название шрифта</label
-                  ><input
-                    id="appearanceCustomFont"
-                    placeholder="Например: Ubuntu Sans"
-                    data-i18n-placeholder="e.g. Ubuntu Sans"
-                  />
-                </div>
-                <div class="field range-field">
-                  <label
-                    ><span data-i18n="Font size">Размер текста</span
-                    ><strong id="fontScaleValue"></strong></label
-                  ><input
-                    type="range"
-                    id="appearanceFontScale"
-                    min="0.9"
-                    max="1.5"
-                    step="0.05"
-                  />
-                </div>
-                <div class="field">
-                  <label data-i18n="Density">Плотность</label>
-                  <div class="segmented">
-                    <button data-density-choice="compact" data-i18n="Compact">
-                      Компактно</button
-                    ><button
-                      data-density-choice="comfortable"
-                      data-i18n="Comfortable"
-                    >
-                      Обычная
-                    </button>
-                  </div>
-                </div>
-                <div class="field range-field">
-                  <label
-                    ><span data-i18n="Panel opacity"
-                      >Непрозрачность панелей</span
-                    ><strong id="opacityValue"></strong></label
-                  ><input
-                    type="range"
-                    id="appearanceOpacity"
-                    min="0.72"
-                    max="1"
-                    step="0.02"
-                  />
-                </div>
-                <label class="check-row"
-                  ><input type="checkbox" id="appearanceGlass" />
-                  <span data-i18n="Blur behind panels"
-                    >Размытие под панелями</span
-                  ></label
-                >
-
-                <label class="check-row"
-                  ><input type="checkbox" id="appearanceMotion" /><span
-                    data-i18n="Interface animations"
-                    >Анимации интерфейса</span
-                  ></label
-                >
-              </div>
-              <button
-                class="text-button"
-                id="resetAppearance"
-                data-i18n="Restore defaults"
-              >
-                Вернуть стандартное оформление
-              </button>
-            </div>
-            <aside class="appearance-sample">
-              <h3 data-i18n="Preview">Образец</h3>
-              <div id="appearancePreview" class="appearance-preview"></div>
-              <p
-                id="appearanceContrast"
-                class="contrast-hint"
-                role="status"
-              ></p>
+            <button data-settings-choice="general" data-i18n="General">
+              Основные
+            </button>
+            <button data-settings-choice="appearance" data-i18n="Appearance">
+              Внешний вид
+            </button>
+            <button
+              data-settings-choice="environments"
+              data-i18n="Run environments"
+            >
+              Среды запуска
+            </button>
+          </nav>
+          <div class="settings-section" data-settings-section="general">
+            <h3 data-i18n="General">Основные</h3>
+            <div class="field language-field">
+              <label for="languageSelect" data-i18n="Language">Язык</label>
+              <select id="languageSelect">
+                <option value="ru">Русский</option>
+                <option value="en">English</option>
+              </select>
               <p
                 class="hint"
-                data-i18n="Individual panel colors are set in panel parameters."
+                data-i18n="Language changes immediately and is saved in this browser."
               >
-                Цвета отдельных панелей задаются в параметрах панели.
-              </p>
-            </aside>
-          </div>
-        </div>
-        <div
-          class="settings-section hidden"
-          data-settings-section="environments"
-        >
-          <div class="section-title">
-            <div>
-              <h3 data-i18n="Run environments">Среды запуска</h3>
-              <p
-                data-i18n="The setup command runs before each command. Leave it empty if no setup is needed."
-              >
-                Команда подготовки выполняется перед каждой командой сценария.
-                Если подготовка не нужна, оставьте поле пустым.
+                Язык меняется сразу и сохраняется в этом браузере.
               </p>
             </div>
-            <button
-              class="button secondary small"
-              id="addTarget"
-              data-i18n="＋ Add environment"
-            >
-              ＋ Добавить среду
-            </button>
           </div>
-          <div id="targetEditor" class="target-editor"></div>
+          <div class="settings-section" data-settings-section="appearance">
+            <p
+              class="hint"
+              data-i18n="Defaults for this browser. Preview changes here, then save to apply them."
+            >
+              Общие настройки для этого браузера. Проверьте образец и сохраните
+              изменения.
+            </p>
+            <div class="appearance-workbench">
+              <div class="appearance-options">
+                <div class="field theme-field">
+                  <label data-i18n="Theme">Тема</label
+                  ><select id="appearanceTheme">
+                    <option value="dark" data-i18n="Dark">Тёмная</option>
+                    <option value="light" data-i18n="Light">Светлая</option>
+                  </select>
+                </div>
+                <button
+                  class="text-button"
+                  id="resetAppearance"
+                  data-i18n="Restore defaults"
+                >
+                  Вернуть стандартное оформление
+                </button>
+                <details class="disclosure palette-details">
+                  <summary data-i18n="Customize colors">
+                    Настроить цвета
+                  </summary>
+                  <div id="appearanceColors" class="color-grid"></div>
+                </details>
+                <h3 class="appearance-subtitle" data-i18n="Layout and text">
+                  Отображение и текст
+                </h3>
+                <div class="appearance-grid">
+                  <div class="field">
+                    <label data-i18n="Commands layout">Отображение команд</label
+                    ><select id="appearanceLayout">
+                      <option value="grid" data-i18n="Cards">Карточки</option>
+                      <option value="list" data-i18n="List">Список</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label data-i18n="Font">Шрифт</label
+                    ><select id="appearanceFont">
+                      <option value="system" data-i18n="System">
+                        Системный
+                      </option>
+                      <option value="mono" data-i18n="Monospace">
+                        Моноширинный
+                      </option>
+                      <option value="serif" data-i18n="Serif">
+                        С засечками
+                      </option>
+                      <option value="custom" data-i18n="Custom">Другой</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label data-i18n="Custom font name">Название шрифта</label
+                    ><input
+                      id="appearanceCustomFont"
+                      placeholder="Например: Ubuntu Sans"
+                      data-i18n-placeholder="e.g. Ubuntu Sans"
+                    />
+                  </div>
+                  <div class="field range-field">
+                    <label
+                      ><span data-i18n="Font size">Размер текста</span
+                      ><strong id="fontScaleValue"></strong></label
+                    ><input
+                      type="range"
+                      id="appearanceFontScale"
+                      min="0.9"
+                      max="1.5"
+                      step="0.05"
+                    />
+                  </div>
+                  <div class="field">
+                    <label data-i18n="Density">Плотность</label>
+                    <select id="appearanceDensity">
+                      <option value="comfortable" data-i18n="Comfortable">
+                        Обычная
+                      </option>
+                      <option value="compact" data-i18n="Compact">
+                        Компактно
+                      </option>
+                    </select>
+                  </div>
+                  <div class="field range-field">
+                    <label
+                      ><span data-i18n="Panel opacity"
+                        >Непрозрачность панелей</span
+                      ><strong id="opacityValue"></strong></label
+                    ><input
+                      type="range"
+                      id="appearanceOpacity"
+                      min="0.72"
+                      max="1"
+                      step="0.02"
+                    />
+                  </div>
+                </div>
+                <div class="appearance-effects">
+                  <label class="switch-row"
+                    ><span class="switch-label" data-i18n="Blur behind panels"
+                      >Размытие под панелями</span
+                    ><input
+                      type="checkbox"
+                      role="switch"
+                      id="appearanceGlass" /><span
+                      class="switch-track"
+                      aria-hidden="true"
+                    ></span
+                  ></label>
+
+                  <label class="switch-row"
+                    ><span class="switch-label" data-i18n="Interface animations"
+                      >Анимации интерфейса</span
+                    ><input
+                      type="checkbox"
+                      role="switch"
+                      id="appearanceMotion" /><span
+                      class="switch-track"
+                      aria-hidden="true"
+                    ></span
+                  ></label>
+                </div>
+              </div>
+              <aside class="appearance-sample">
+                <h3 data-i18n="Preview">Образец</h3>
+                <div id="appearancePreview" class="appearance-preview"></div>
+                <p
+                  id="appearanceContrast"
+                  class="contrast-hint"
+                  role="status"
+                ></p>
+                <p
+                  class="hint"
+                  data-i18n="Individual panel colors are set in panel parameters."
+                >
+                  Цвета отдельных панелей задаются в параметрах панели.
+                </p>
+              </aside>
+            </div>
+          </div>
+          <div
+            class="settings-section hidden"
+            data-settings-section="environments"
+          >
+            <div class="section-title">
+              <div>
+                <h3 data-i18n="Run environments">Среды запуска</h3>
+                <p
+                  data-i18n="The setup command runs before each command. Leave it empty if no setup is needed."
+                >
+                  Команда подготовки выполняется перед каждой командой сценария.
+                  Если подготовка не нужна, оставьте поле пустым.
+                </p>
+              </div>
+              <button
+                class="button secondary small"
+                id="addTarget"
+                data-i18n="＋ Add environment"
+              >
+                ＋ Добавить среду
+              </button>
+            </div>
+            <div id="targetEditor" class="target-editor"></div>
+          </div>
         </div>
         <div class="modal-actions">
           <button class="button secondary close-settings" data-i18n="Cancel">

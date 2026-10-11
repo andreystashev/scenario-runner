@@ -112,6 +112,7 @@ export function panelAppearance(global, overrides = {}) {
   return result;
 }
 export function colorTokens(value) {
+  const muted = mix(value.text, value.surface, 0.68);
   return {
     "--bg": value.background,
     "--surface": value.surface,
@@ -126,7 +127,8 @@ export function colorTokens(value) {
     "--surface-2": mix(value.text, value.surface, 0.06),
     "--line": mix(value.text, value.surface, 0.16),
     "--line-strong": mix(value.text, value.surface, 0.3),
-    "--muted": mix(value.text, value.surface, 0.68),
+    "--muted": muted,
+    "--select-arrow": `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%23${muted.slice(1)}' stroke-width='1.7'%3E%3Cpath d='m3 5 4 4 4-4'/%3E%3C/svg%3E")`,
     "--accent-soft": mix(value.accent, value.surface, 0.16),
     "--log-bg": mix(value.background, value.surface, 0.45),
   };

@@ -16,13 +16,13 @@ The application uses the **Python standard library** and a browser interface. Do
 - Stop commands and terminal windows created by a panel.
 - Search panels and commands, filter active panels or errors, and copy command output.
 - Duplicate scenarios and commands, reorder commands, and protect unsaved drafts.
-- Switch between Russian and English with a persistent RU / EN preference.
+- Switch between Russian and English with a persistent language preference in settings.
 - Preview and customize light/dark themes, semantic colors, typography, text size, density, opacity, and animations.
 - Give individual panels their own accent, background, text color, and command layout.
 
 The interface uses three terms: a **scenario** is a saved set of commands; a **panel** runs a scenario with its own data path, variables, and command selection; a **run environment** is a local computer or Docker container.
 
-Language is selected in the top bar and saved in the current browser. Russian is the default. UI labels and generated messages are translated; user names, commands, paths, variables, and program output remain literal.
+Language is selected in **Settings → General** and saved in the current browser. Russian is the default. UI labels and generated messages are translated; user names, commands, paths, variables, and program output remain literal.
 
 ## Quick start
 

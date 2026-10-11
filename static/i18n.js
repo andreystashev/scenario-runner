@@ -1,5 +1,8 @@
 /** English source copy with a complete Russian catalog. User content is never translated. */
 export const russian = {
+  General: "Основные",
+  "Language changes immediately and is saved in this browser.":
+    "Язык меняется сразу и сохраняется в этом браузере.",
   "This panel and its command cards": "Эта панель и её карточки команд",
   Accent: "Акцент",
   "Buttons, selection and focus": "Кнопки, выбор и фокус",

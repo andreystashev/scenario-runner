@@ -45,11 +45,11 @@ Save editor changes with **Save**, `⌘S`, or `Ctrl+S`. `Escape` warns before di
 
 ## Language
 
-Use **RU / EN** in the top bar. The selection is saved in this browser and can be changed without changing the saved scenarios. Only application labels and generated messages are translated; user content and program output retain their original text.
+Choose **Русский / English** in **Settings → General → Language**. The selection is saved in this browser and can be changed without changing the saved scenarios. Only application labels and generated messages are translated; user content and program output retain their original text.
 
 ## Appearance
 
-Open **Settings → Appearance**. Choose a dark or light palette, then expand **Customize colors** for named colors and HEX values. The accent controls buttons, selection, and focus; information, running, warning, and error colors control their corresponding status elements. Borders, secondary text, input backgrounds, and output surfaces are derived from your chosen colors.
+Open **Settings → Appearance**. Choose a dark or light theme, then expand **Customize colors** for named colors and HEX values. The accent controls buttons, selection, and focus; information, running, warning, and error colors control their corresponding status elements. Borders, secondary text, input backgrounds, and output surfaces are derived from your chosen colors.
 
 Changes stay in the sample until you press **Save**. **Cancel** leaves the current appearance intact. Low text contrast is flagged in the preview, and **Restore defaults** resets all appearance preferences. Global preferences are saved in this browser, preserving colors from earlier versions.
 
