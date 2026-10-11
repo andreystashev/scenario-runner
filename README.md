@@ -17,7 +17,8 @@ The application uses the **Python standard library** and a browser interface. Do
 - Search panels and commands, filter active panels or errors, and copy command output.
 - Duplicate scenarios and commands, reorder commands, and protect unsaved drafts.
 - Switch between Russian and English with a persistent RU / EN preference.
-- Customize light/dark themes, colors, typography, scale, density, and opacity.
+- Preview and customize light/dark themes, semantic colors, typography, text size, density, opacity, and animations.
+- Give individual panels their own accent, background, text color, and command layout.
 
 The interface uses three terms: a **scenario** is a saved set of commands; a **panel** runs a scenario with its own data path, variables, and command selection; a **run environment** is a local computer or Docker container.
 
@@ -64,11 +65,11 @@ The server listens on loopback and executes commands with your account's permiss
 
 ## Configuration and logs
 
-| Location | Contents |
-| --- | --- |
-| `~/.config/scenario-runner/` | Settings, scenarios, and workspace definitions |
-| `~/.cache/scenario-runner/` | Runtime files and logs |
-| `~/.cache/scenario-runner/server.log` | Server log |
+| Location                              | Contents                                       |
+| ------------------------------------- | ---------------------------------------------- |
+| `~/.config/scenario-runner/`          | Settings, scenarios, and workspace definitions |
+| `~/.cache/scenario-runner/`           | Runtime files and logs                         |
+| `~/.cache/scenario-runner/server.log` | Server log                                     |
 
 ```bash
 SCENARIO_RUNNER_PORT=8020 ./start
@@ -80,12 +81,12 @@ Stop the existing server before changing the port. See the [usage and troublesho
 
 ## Architecture
 
-| Component | Responsibility |
-| --- | --- |
-| [launcher.py](launcher.py) | Start/stop coordination, browser opening, and server identity checks |
-| [server.py](server.py) | Local HTTP API, configuration, run environments, and command lifecycle |
-| [static/](static/) | Browser interface |
-| `start`, `start.command`, `stop.sh` | Shell and Finder entry points |
+| Component                           | Responsibility                                                         |
+| ----------------------------------- | ---------------------------------------------------------------------- |
+| [launcher.py](launcher.py)          | Start/stop coordination, browser opening, and server identity checks   |
+| [server.py](server.py)              | Local HTTP API, configuration, run environments, and command lifecycle |
+| [static/](static/)                  | Browser interface                                                      |
+| `start`, `start.command`, `stop.sh` | Shell and Finder entry points                                          |
 
 Configuration changes are validated and persisted before they become visible in memory. JSON writes use a separate temporary file, `fsync`, and atomic replacement. Failed validation or saving leaves the previous configuration intact. Process actions already performed cannot be rolled back by a failed configuration save.
 

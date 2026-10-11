@@ -1,5 +1,51 @@
 /** English source copy with a complete Russian catalog. User content is never translated. */
 export const russian = {
+  "This panel and its command cards": "Эта панель и её карточки команд",
+  Accent: "Акцент",
+  "Buttons, selection and focus": "Кнопки, выбор и фокус",
+  "Page background": "Фон страницы",
+  "The area behind panels": "Область за панелями",
+  "Panel background": "Фон панели",
+  "Panels, dialogs and command cards": "Панели, окна и карточки команд",
+  Text: "Текст",
+  "Headings, commands and output": "Заголовки, команды и вывод",
+  Information: "Информация",
+  "Paths and run environments": "Пути и среды запуска",
+  "Running status": "Статус выполнения",
+  "Active command badges and borders": "Значки и рамки активных команд",
+  Warning: "Предупреждение",
+  "Starting and external processes": "Запуск и внешние процессы",
+  Error: "Ошибка",
+  "Failed commands and stop actions": "Ошибки команд и кнопки остановки",
+  "{name} · HEX": "{name} · HEX",
+  "Custom color": "Свой цвет",
+  "Background command · output below": "Команда в фоне · вывод ниже",
+  "Theme preview": "Образец темы",
+  "Panel preview": "Образец панели",
+  "Low text contrast. Choose a lighter or darker text color.":
+    "Текст плохо различим. Выберите более светлый или тёмный цвет текста.",
+  "Settings sections": "Разделы настроек",
+  "Defaults for this browser. Preview changes here, then save to apply them.":
+    "Общие настройки для этого браузера. Проверьте образец и сохраните изменения.",
+  "Customize colors": "Настроить цвета",
+  "Layout and text": "Отображение и текст",
+  "Commands layout": "Отображение команд",
+  Cards: "Карточки",
+  List: "Список",
+  "Interface animations": "Анимации интерфейса",
+  "Restore defaults": "Вернуть стандартное оформление",
+  Preview: "Образец",
+  "Individual panel colors are set in panel parameters.":
+    "Цвета отдельных панелей задаются в параметрах панели.",
+  "Panel appearance": "Оформление панели",
+  "Inherits global colors unless a custom color is enabled. Saved with this panel.":
+    "Наследует общие цвета, пока не включён свой цвет. Сохраняется вместе с панелью.",
+  "Use global settings": "Общие настройки",
+  "Use global appearance": "Использовать общее оформление",
+  "Panel appearance must be a JSON object.":
+    "Оформление панели должно быть JSON-объектом",
+  "Invalid panel appearance.": "Некорректное оформление панели",
+
   "Some commands could not be stopped.": "Не все команды остановлены.",
   Active: "Активные",
   "With errors": "С ошибками",
@@ -321,6 +367,11 @@ export const russian = {
 };
 
 const serverMessages = [
+  [
+    "Оформление панели должно быть JSON-объектом",
+    "Panel appearance must be a JSON object.",
+  ],
+  ["Некорректное оформление панели", "Invalid panel appearance."],
   ["Процесс сценария работает", "Command is running."],
   [
     "Команда завершена; терминал открыт для ручной работы",

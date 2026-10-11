@@ -1,4 +1,14 @@
 import {
+  palettes,
+  appearanceDefaults,
+  colorKeys,
+  normalizeAppearance,
+  panelAppearance,
+  colorTokens,
+  contrast,
+  isColor,
+} from "./appearance.js";
+import {
   t,
   getLanguage,
   setLanguage,
@@ -43,65 +53,21 @@ let searchQuery = "",
   toastTimer = null,
   lastInteractionAt = 0;
 const detailState = new Map();
-const palettes = {
-  dark: {
-    accent: "#48e29a",
-    background: "#091015",
-    surface: "#111d26",
-    text: "#edf5f4",
-  },
-  light: {
-    accent: "#168f62",
-    background: "#edf3f1",
-    surface: "#ffffff",
-    text: "#13211e",
-  },
-};
-const appearanceDefaults = {
-  theme: "dark",
-  ...palettes.dark,
-  fontFamily: "system",
-  customFont: "",
-  fontScale: 1,
-  density: "comfortable",
-  panelOpacity: 0.96,
-  glass: true,
-};
 let appearance = loadAppearance();
+let panelAppearanceDraft = {};
 function loadAppearance() {
   try {
-    const saved = JSON.parse(
-      localStorage.getItem("scenario-runner-appearance-v1") || "{}",
+    return normalizeAppearance(
+      JSON.parse(localStorage.getItem("scenario-runner-appearance-v1") || "{}"),
     );
-    if (!saved || typeof saved !== "object" || Array.isArray(saved))
-      return { ...appearanceDefaults };
-    const result = {
-      ...appearanceDefaults,
-      ...(palettes[saved.theme] || {}),
-      ...saved,
-    };
-    if (!Object.hasOwn(palettes, result.theme)) result.theme = "dark";
-    if (!["system", "mono", "serif", "custom"].includes(result.fontFamily))
-      result.fontFamily = "system";
-    if (!["comfortable", "compact"].includes(result.density))
-      result.density = "comfortable";
-    result.customFont =
-      typeof result.customFont === "string" ? result.customFont : "";
-    for (const key of ["accent", "background", "surface", "text"])
-      if (!/^#[0-9a-f]{6}$/i.test(result[key]))
-        result[key] = palettes[result.theme][key];
-    for (const [key, min, max] of [
-      ["fontScale", 0.9, 1.5],
-      ["panelOpacity", 0.72, 1],
-    ])
-      result[key] = Number.isFinite(result[key])
-        ? Math.min(max, Math.max(min, result[key]))
-        : appearanceDefaults[key];
-    result.glass = typeof result.glass === "boolean" ? result.glass : true;
-    return result;
   } catch {
-    return { ...appearanceDefaults };
+    return normalizeAppearance(null);
   }
+}
+function applyColors(node, values) {
+  for (const [key, value] of Object.entries(colorTokens(values)))
+    node.style.setProperty(key, value);
+  node.dataset.layout = values.layout;
 }
 function fontStack() {
   if (appearance.fontFamily === "mono")
@@ -117,13 +83,19 @@ function applyAppearance() {
   style.setProperty("--font-scale", appearance.fontScale);
   style.setProperty("--panel-opacity", appearance.panelOpacity);
   style.setProperty("--app-font", fontStack());
-  style.setProperty("--green", appearance.accent);
-  style.setProperty("--bg", appearance.background);
-  style.setProperty("--surface", appearance.surface);
-  style.setProperty("--text", appearance.text);
+  applyColors(document.documentElement, appearance);
+  document.documentElement.style.colorScheme = appearance.theme;
   document.body.dataset.theme = appearance.theme;
   document.body.dataset.density = appearance.density;
   document.body.dataset.glass = appearance.glass ? "on" : "off";
+  document.body.dataset.motion = appearance.motion ? "on" : "off";
+  document.querySelectorAll(".workspace[data-id]").forEach((card) => {
+    const workspace = state?.workspaces.find(
+      (item) => item.id === card.dataset.id,
+    );
+    if (workspace)
+      applyColors(card, panelAppearance(appearance, workspace.appearance));
+  });
 }
 function toast(message, error = false) {
   const box = $("#toast");
@@ -341,6 +313,10 @@ function renderWorkspace(workspace) {
       !workspace.steps[spec.id]?.external,
   );
   const card = el("article", "workspace");
+  applyColors(card, panelAppearance(appearance, workspace.appearance));
+  card.dataset.customAppearance = Object.keys(workspace.appearance || {}).length
+    ? "true"
+    : "false";
   const head = el("div", "workspace-head");
   const title = el("div", "workspace-title");
   const eyebrow = el("div", "workspace-eyebrow", workspace.preset.name);
@@ -794,45 +770,184 @@ async function savePreset() {
   fillPreset();
   toast(t("Scenario saved"));
 }
-function populateAppearance() {
-  $("#appearanceAccent").value = appearance.accent;
-  $("#appearanceBackground").value = appearance.background;
-  $("#appearanceSurface").value = appearance.surface;
-  $("#appearanceText").value = appearance.text;
-  $("#appearanceFont").value = appearance.fontFamily;
-  $("#appearanceCustomFont").value = appearance.customFont;
-  $("#appearanceFontScale").value = appearance.fontScale;
-  $("#appearanceOpacity").value = appearance.panelOpacity;
-  $("#appearanceGlass").checked = appearance.glass;
+const colorLabels = {
+  accent: ["Accent", "Buttons, selection and focus"],
+  background: ["Page background", "The area behind panels"],
+  surface: ["Panel background", "Panels, dialogs and command cards"],
+  text: ["Text", "Headings, commands and output"],
+  info: ["Information", "Paths and run environments"],
+  success: ["Running status", "Active command badges and borders"],
+  warning: ["Warning", "Starting and external processes"],
+  danger: ["Error", "Failed commands and stop actions"],
+};
+function colorControl(key, values, changed, inherited = false) {
+  const field = el("div", "color-field");
+  const id = createId("color");
+  const label = el("label", "", t(colorLabels[key][0]));
+  label.htmlFor = id;
+  const hint = el(
+    "small",
+    "",
+    t(
+      inherited && key === "surface"
+        ? "This panel and its command cards"
+        : colorLabels[key][1],
+    ),
+  );
+  const row = el("div", "color-input-row");
+  const swatch = el("input", "color-swatch");
+  swatch.type = "color";
+  swatch.id = id;
+  const hex = el("input", "color-hex");
+  hex.setAttribute(
+    "aria-label",
+    t("{name} · HEX", { name: t(colorLabels[key][0]) }),
+  );
+  hex.maxLength = 7;
+  hex.spellcheck = false;
+  const value = values[key] || appearance[key];
+  swatch.value = value;
+  hex.value = value.toUpperCase();
+  const update = (value) => {
+    if (!isColor(value)) {
+      hex.setAttribute("aria-invalid", "true");
+      return;
+    }
+    hex.removeAttribute("aria-invalid");
+    values[key] = value;
+    swatch.value = value;
+    hex.value = value.toUpperCase();
+    changed();
+  };
+  swatch.oninput = () => update(swatch.value);
+  hex.oninput = () => update(hex.value);
+  hex.onblur = () => {
+    hex.value = swatch.value.toUpperCase();
+    hex.removeAttribute("aria-invalid");
+  };
+  row.append(swatch, hex);
+  field.append(label, hint, row);
+  if (inherited) {
+    const toggle = el("input");
+    toggle.type = "checkbox";
+    toggle.checked = Boolean(values[key]);
+    const inherit = el("label", "check-row");
+    inherit.append(toggle, el("span", "", t("Custom color")));
+    swatch.disabled = hex.disabled = !toggle.checked;
+    toggle.onchange = () => {
+      if (toggle.checked) values[key] = swatch.value;
+      else delete values[key];
+      swatch.disabled = hex.disabled = !toggle.checked;
+      changed();
+    };
+    field.append(inherit);
+  }
+  return field;
+}
+function renderColorControls() {
+  $("#appearanceColors").replaceChildren(
+    ...colorKeys.map((key) =>
+      colorControl(key, appearance, updateAppearancePreview),
+    ),
+  );
+}
+function preview(container, values, title) {
+  applyColors(container, values);
+  container.style.setProperty("--panel-opacity", values.panelOpacity);
+  container.style.setProperty("--font-scale", values.fontScale);
+  container.style.setProperty("--app-font", fontStack());
+  container.style.fontSize = `${14 * values.fontScale}px`;
+  container.dataset.density = values.density;
+  container.replaceChildren();
+  const head = el("div", "preview-head");
+  head.append(
+    el("strong", "", title),
+    el("span", "status-badge running", t("Running")),
+  );
+  const actions = el("div", "preview-actions");
+  actions.append(
+    el("span", "button primary", t("▶ Run")),
+    el("span", "button danger", t("■ Stop")),
+  );
+  const statuses = el("div", "preview-statuses");
+  statuses.append(
+    el("span", "mode", t("Information")),
+    el("span", "status-badge starting", t("Starting")),
+    el("span", "status-badge failed", t("Failed")),
+  );
+  const output = el("pre", "log", "$ python3 app.py\nReady on localhost:8000");
+  const panel = el("div", "preview-panel");
+  panel.style.padding = values.density === "compact" ? "12px" : "18px";
+  panel.append(
+    head,
+    el("p", "status-text", t("Background command · output below")),
+    actions,
+    statuses,
+    output,
+  );
+  container.dataset.glass = values.glass ? "on" : "off";
+  container.append(panel);
+}
+function updateAppearancePreview() {
   updateAppearanceLabels();
+  preview($("#appearancePreview"), appearance, t("Theme preview"));
+  $("#appearanceContrast").textContent =
+    contrast(appearance.text, appearance.surface) < 4.5 ||
+    contrast(appearance.text, appearance.background) < 4.5
+      ? t("Low text contrast. Choose a lighter or darker text color.")
+      : "";
+  $("#appearanceCustomFont").disabled = appearance.fontFamily !== "custom";
+}
+function populateAppearance() {
+  renderColorControls();
+  for (const [id, key] of Object.entries({
+    appearanceFont: "fontFamily",
+    appearanceCustomFont: "customFont",
+    appearanceFontScale: "fontScale",
+    appearanceOpacity: "panelOpacity",
+    appearanceLayout: "layout",
+  }))
+    $("#" + id).value = appearance[key];
+  $("#appearanceGlass").checked = appearance.glass;
+  $("#appearanceMotion").checked = appearance.motion;
+  updateAppearancePreview();
 }
 function updateAppearanceLabels() {
   $("#fontScaleValue").textContent =
     `${Math.round(appearance.fontScale * 100)}%`;
   $("#opacityValue").textContent =
     `${Math.round(appearance.panelOpacity * 100)}%`;
+  for (const [attribute, key] of [
+    ["theme", "theme"],
+    ["density", "density"],
+  ])
+    document
+      .querySelectorAll(`[data-${attribute}-choice]`)
+      .forEach((control) => {
+        const selected =
+          control.dataset[attribute + "Choice"] === appearance[key];
+        control.classList.toggle("active", selected);
+        control.setAttribute("aria-pressed", selected);
+      });
+}
+function showSettingsSection(section) {
   document
-    .querySelectorAll("[data-theme-choice]")
-    .forEach((button) =>
-      button.classList.toggle(
-        "active",
-        button.dataset.themeChoice === appearance.theme,
-      ),
+    .querySelectorAll("[data-settings-section]")
+    .forEach((node) =>
+      node.classList.toggle("hidden", node.dataset.settingsSection !== section),
     );
-  document
-    .querySelectorAll("[data-density-choice]")
-    .forEach((button) =>
-      button.classList.toggle(
-        "active",
-        button.dataset.densityChoice === appearance.density,
-      ),
-    );
+  document.querySelectorAll("[data-settings-choice]").forEach((control) => {
+    const selected = control.dataset.settingsChoice === section;
+    control.classList.toggle("active", selected);
+    control.setAttribute("aria-pressed", selected);
+  });
 }
 function openSettings() {
   if (!state || activeOverlay) return;
   settingsDraft = structuredClone(state.settings);
   appearanceBeforeSettings = structuredClone(appearance);
   populateAppearance();
+  showSettingsSection("appearance");
   renderTargets();
   showOverlay("#settingsModal");
 }
@@ -953,8 +1068,31 @@ function openVariables(workspace) {
   variablesDraft = Object.entries(workspace.variables || {}).map(
     ([key, value]) => ({ key, value }),
   );
+  panelAppearanceDraft = structuredClone(workspace.appearance || {});
+  renderPanelAppearance();
   renderVariables();
   showOverlay("#variablesModal");
+}
+function renderPanelAppearance() {
+  $("#panelColors").replaceChildren(
+    ...["accent", "surface", "text"].map((key) =>
+      colorControl(key, panelAppearanceDraft, updatePanelPreview, true),
+    ),
+  );
+  $("#panelLayout").value = panelAppearanceDraft.layout || "inherit";
+  updatePanelPreview();
+}
+function updatePanelPreview() {
+  const values = panelAppearance(appearance, panelAppearanceDraft);
+  preview(
+    $("#panelAppearancePreview"),
+    values,
+    $("#workspaceName").value || t("Panel preview"),
+  );
+  $("#panelContrast").textContent =
+    contrast(values.text, values.surface) < 4.5
+      ? t("Low text contrast. Choose a lighter or darker text color.")
+      : "";
 }
 function renderVariables() {
   $("#variablesEditor").replaceChildren(
@@ -1162,6 +1300,7 @@ bindAction("#saveSettings", async () => {
     JSON.stringify(appearance),
   );
   appearanceBeforeSettings = null;
+  applyAppearance();
   hideOverlay();
   toast(t("Settings saved"));
 });
@@ -1171,28 +1310,23 @@ document.querySelectorAll("[data-theme-choice]").forEach(
       appearance.theme = control.dataset.themeChoice;
       Object.assign(appearance, palettes[appearance.theme]);
       populateAppearance();
-      applyAppearance();
     }),
 );
 document.querySelectorAll("[data-density-choice]").forEach(
   (control) =>
     (control.onclick = () => {
       appearance.density = control.dataset.densityChoice;
-      applyAppearance();
-      updateAppearanceLabels();
+      updateAppearancePreview();
     }),
 );
 for (const [id, key] of Object.entries({
-  appearanceAccent: "accent",
-  appearanceBackground: "background",
-  appearanceSurface: "surface",
-  appearanceText: "text",
+  appearanceLayout: "layout",
   appearanceFont: "fontFamily",
   appearanceCustomFont: "customFont",
 })) {
   $(`#${id}`).oninput = (event) => {
     appearance[key] = event.target.value;
-    applyAppearance();
+    updateAppearancePreview();
   };
 }
 for (const [id, key] of Object.entries({
@@ -1201,14 +1335,38 @@ for (const [id, key] of Object.entries({
 })) {
   $(`#${id}`).oninput = (event) => {
     appearance[key] = Number(event.target.value);
-    applyAppearance();
-    updateAppearanceLabels();
+    updateAppearancePreview();
   };
 }
 $("#appearanceGlass").onchange = (event) => {
   appearance.glass = event.target.checked;
-  applyAppearance();
+  updateAppearancePreview();
 };
+$("#appearanceMotion").onchange = (event) => {
+  appearance.motion = event.target.checked;
+  updateAppearancePreview();
+};
+$("#resetAppearance").onclick = () => {
+  appearance = normalizeAppearance(null);
+  populateAppearance();
+};
+document
+  .querySelectorAll("[data-settings-choice]")
+  .forEach(
+    (control) =>
+      (control.onclick = () =>
+        showSettingsSection(control.dataset.settingsChoice)),
+  );
+$("#panelLayout").onchange = (event) => {
+  if (event.target.value === "inherit") delete panelAppearanceDraft.layout;
+  else panelAppearanceDraft.layout = event.target.value;
+  updatePanelPreview();
+};
+$("#resetPanelAppearance").onclick = () => {
+  panelAppearanceDraft = {};
+  renderPanelAppearance();
+};
+$("#workspaceName").addEventListener("input", updatePanelPreview);
 document
   .querySelectorAll(".close-variables")
   .forEach((node) => (node.onclick = hideOverlay));
@@ -1226,6 +1384,7 @@ bindAction("#saveVariables", async () => {
   const body = {
     name,
     variables,
+    appearance: panelAppearanceDraft,
     bag_path: $("#workspaceBagPath").value.trim(),
   };
   if ($("#workspacePreset").value !== workspace.preset_id)
@@ -1290,8 +1449,13 @@ $("#languageSelect").onchange = (event) => {
     renderPresetTabs();
     renderStepEditor();
     feedback();
-  } else if (activeOverlay?.id === "settingsModal") renderTargets();
-  else if (activeOverlay?.id === "variablesModal") renderVariables();
+  } else if (activeOverlay?.id === "settingsModal") {
+    renderTargets();
+    populateAppearance();
+  } else if (activeOverlay?.id === "variablesModal") {
+    renderVariables();
+    renderPanelAppearance();
+  }
   $("#toast").className = "toast";
   try {
     localStorage.setItem("scenario-runner-language", getLanguage());

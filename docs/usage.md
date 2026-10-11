@@ -47,6 +47,16 @@ Save editor changes with **Save**, `⌘S`, or `Ctrl+S`. `Escape` warns before di
 
 Use **RU / EN** in the top bar. The selection is saved in this browser and can be changed without changing the saved scenarios. Only application labels and generated messages are translated; user content and program output retain their original text.
 
+## Appearance
+
+Open **Settings → Appearance**. Choose a dark or light palette, then expand **Customize colors** for named colors and HEX values. The accent controls buttons, selection, and focus; information, running, warning, and error colors control their corresponding status elements. Borders, secondary text, input backgrounds, and output surfaces are derived from your chosen colors.
+
+Changes stay in the sample until you press **Save**. **Cancel** leaves the current appearance intact. Low text contrast is flagged in the preview, and **Restore defaults** resets all appearance preferences. Global preferences are saved in this browser, preserving colors from earlier versions.
+
+**Panel parameters → Panel appearance** lets you enable a custom accent, background, or text color independently for one panel. Its command cards and output use those colors too. A custom panel background receives readable text automatically unless you also choose a custom text color. Choose cards or a list for commands, or inherit the global layout. **Use global appearance** removes all overrides. Panel appearance is saved in `workspaces.json`, so it is shared by browsers using the same server and remains after a restart.
+
+Text size, density, opacity, blur, and interface animations are available globally. The system’s reduced-motion preference is always respected.
+
 ## Server lifecycle
 
 Repeated `./start` calls open the same server. Concurrent starts use a file lock. A different service on the requested port is reported as a conflict and is not stopped or treated as Scenario Runner.

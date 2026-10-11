@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.8.0"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path(os.getenv("SCENARIO_RUNNER_CONFIG_DIR", "~/.config/scenario-runner")).expanduser()
@@ -363,11 +363,32 @@ def target_is_docker(spec_or_target: dict) -> bool:
     return target.get("type") == "docker"
 
 
+def normalize_panel_appearance(raw: Any, *, strict: bool = True) -> dict:
+    """Only allow a small set of presentation values, never arbitrary CSS."""
+    if not isinstance(raw, dict):
+        if strict:
+            raise ApiError(400, "Оформление панели должно быть JSON-объектом")
+        return {}
+    result = {}
+    for key, value in raw.items():
+        valid = (
+            key in ("accent", "surface", "text") and isinstance(value, str)
+            and re.fullmatch(r"#[0-9a-fA-F]{6}", value)
+        ) or (key == "layout" and value in ("grid", "list"))
+        if not valid:
+            if strict:
+                raise ApiError(400, "Некорректное оформление панели")
+            continue
+        result[key] = value.lower() if key != "layout" else value
+    return result
+
+
 def sync_workspace(workspace: dict) -> None:
     preset = preset_for(workspace)
     old = workspace.get("steps") if isinstance(workspace.get("steps"), dict) else {}
     workspace["preset_id"] = preset["id"]
     workspace.setdefault("variables", {})
+    workspace["appearance"] = normalize_panel_appearance(workspace.get("appearance", {}), strict=False)
     workspace["steps"] = {
         spec["id"]: {
             **old.get(spec["id"], {}),
@@ -1224,6 +1245,7 @@ class Handler(BaseHTTPRequestHandler):
                         "id": unique_id("panel"), "name": name[:160],
                         "bag_path": str(body.get("bag_path") or "").strip(),
                         "variables": normalize_variables(body.get("variables", {})),
+                        "appearance": normalize_panel_appearance(body.get("appearance", {})),
                         "preset_id": preset_id, "created_at": now_iso(), "steps": {},
                     }
                     sync_workspace(workspace)
@@ -1237,6 +1259,8 @@ class Handler(BaseHTTPRequestHandler):
                         workspace["bag_path"] = str(body["bag_path"]).strip()
                     if "variables" in body:
                         workspace["variables"] = normalize_variables(body["variables"])
+                    if "appearance" in body:
+                        workspace["appearance"] = normalize_panel_appearance(body["appearance"])
                     if "preset_id" in body:
                         if body["preset_id"] not in presets:
                             raise ApiError(404, "Пресет не найден")

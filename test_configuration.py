@@ -76,6 +76,39 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(status, 400)
             self.assert_workspace_unchanged()
 
+    def test_panel_appearance_is_persisted_and_other_panels_inherit_defaults(self):
+        appearance = {"accent": "#AABBEE", "surface": "#ffffff", "layout": "list"}
+        status, state = self.request("/api/workspaces/panel-test/update", {"appearance": appearance})
+        self.assertEqual(status, 200)
+        expected = {**appearance, "accent": "#aabbee"}
+        self.assertEqual(state["workspaces"][0]["appearance"], expected)
+        disk = json.loads(server.WORKSPACES_FILE.read_text())
+        self.assertEqual(disk["workspaces"][0]["appearance"], expected)
+        status, state = self.request("/api/workspaces", {"name": "Another", "preset_id": "test"})
+        self.assertEqual(status, 200)
+        self.assertEqual(state["workspaces"][1]["appearance"], {})
+        status, state = self.request("/api/workspaces/panel-test/update", {"appearance": {}})
+        self.assertEqual(status, 200)
+        self.assertEqual(state["workspaces"][0]["appearance"], {})
+
+    def test_invalid_panel_appearance_and_failed_writes_leave_configuration_intact(self):
+        for appearance in ([], {"text": "red"}, {"accent": "url(evil)"}, {"layout": "unknown"}, {"css": "display:none"}):
+            status, _ = self.request("/api/workspaces/panel-test/update", {"name": "Changed", "appearance": appearance})
+            self.assertEqual(status, 400)
+            self.assert_workspace_unchanged()
+        with patch.object(server, "atomic_json", side_effect=OSError("disk full")):
+            status, _ = self.request("/api/workspaces/panel-test/update", {"appearance": {"accent": "#aabbee"}})
+        self.assertEqual(status, 500)
+        self.assert_workspace_unchanged()
+
+    def test_legacy_panel_and_invalid_saved_appearance_load_with_safe_defaults(self):
+        workspace = {"id": "legacy", "preset_id": "test", "appearance": {"accent": "url(evil)", "text": "#eeeeee"}}
+        server.sync_workspace(workspace)
+        self.assertEqual(workspace["appearance"], {"text": "#eeeeee"})
+        workspace.pop("appearance")
+        server.sync_workspace(workspace)
+        self.assertEqual(workspace["appearance"], {})
+
     def test_selection_is_atomic_and_persisted(self):
         status, state = self.request("/api/workspaces/panel-test/selection", {"selected": False})
         self.assertEqual(status, 200)
