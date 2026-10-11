@@ -70,6 +70,110 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(server.STATE_REVISION, 0)
         self.assertEqual(server.WORKSPACE_REVISIONS, {})
 
+    def test_bad_variables_do_not_change_workspace(self):
+        for variables in ({"bad name": "x"}, {"project_path": "/wrong"}, {"nested": {}}, []):
+            status, _ = self.request("/api/workspaces/panel-test/update", {"name": "Changed", "variables": variables})
+            self.assertEqual(status, 400)
+            self.assert_workspace_unchanged()
+
+    def test_panel_appearance_is_persisted_and_other_panels_inherit_defaults(self):
+        appearance = {"accent": "#AABBEE", "surface": "#ffffff", "layout": "list"}
+        status, state = self.request("/api/workspaces/panel-test/update", {"appearance": appearance})
+        self.assertEqual(status, 200)
+        expected = {**appearance, "accent": "#aabbee"}
+        self.assertEqual(state["workspaces"][0]["appearance"], expected)
+        disk = json.loads(server.WORKSPACES_FILE.read_text())
+        self.assertEqual(disk["workspaces"][0]["appearance"], expected)
+        status, state = self.request("/api/workspaces", {"name": "Another", "preset_id": "test"})
+        self.assertEqual(status, 200)
+        self.assertEqual(state["workspaces"][1]["appearance"], {})
+        status, state = self.request("/api/workspaces/panel-test/update", {"appearance": {}})
+        self.assertEqual(status, 200)
+        self.assertEqual(state["workspaces"][0]["appearance"], {})
+
+    def test_invalid_panel_appearance_and_failed_writes_leave_configuration_intact(self):
+        for appearance in ([], {"text": "red"}, {"accent": "url(evil)"}, {"layout": "unknown"}, {"css": "display:none"}):
+            status, _ = self.request("/api/workspaces/panel-test/update", {"name": "Changed", "appearance": appearance})
+            self.assertEqual(status, 400)
+            self.assert_workspace_unchanged()
+        with patch.object(server, "atomic_json", side_effect=OSError("disk full")):
+            status, _ = self.request("/api/workspaces/panel-test/update", {"appearance": {"accent": "#aabbee"}})
+        self.assertEqual(status, 500)
+        self.assert_workspace_unchanged()
+
+    def test_legacy_panel_and_invalid_saved_appearance_load_with_safe_defaults(self):
+        workspace = {"id": "legacy", "preset_id": "test", "appearance": {"accent": "url(evil)", "text": "#eeeeee"}}
+        server.sync_workspace(workspace)
+        self.assertEqual(workspace["appearance"], {"text": "#eeeeee"})
+        workspace.pop("appearance")
+        server.sync_workspace(workspace)
+        self.assertEqual(workspace["appearance"], {})
+
+    def test_selection_is_atomic_and_persisted(self):
+        status, state = self.request("/api/workspaces/panel-test/selection", {"selected": False})
+        self.assertEqual(status, 200)
+        self.assertFalse(state["workspaces"][0]["steps"]["command-1"]["selected"])
+        before = copy.deepcopy(server.workspaces)
+        with patch.object(server, "atomic_json", side_effect=OSError("disk full")):
+            status, _ = self.request("/api/workspaces/panel-test/selection", {"selected": True})
+        self.assertEqual(status, 500)
+        self.assertEqual(server.workspaces, before)
+
+    def test_invalid_target_ids_are_rejected_without_silent_renaming(self):
+        before = copy.deepcopy(server.settings)
+        targets = before["targets"]
+        for invalid in ([], targets + targets, [{**targets[0], "id": "bad id"}], [{**targets[0], "type": "unknown"}]):
+            status, _ = self.request("/api/settings", {"targets": invalid})
+            self.assertEqual(status, 400)
+            self.assertEqual(server.settings, before)
+
+    def test_selection_requires_boolean(self):
+        for suffix in ("selection", "steps/command-1/select"):
+            status, _ = self.request("/api/workspaces/panel-test/" + suffix, {"selected": "false"})
+            self.assertEqual(status, 400)
+            self.assert_workspace_unchanged()
+
+    def test_pending_launch_blocks_preset_changes_and_panel_removal(self):
+        with patch.object(server, "step_status", return_value={"status": "starting", "owned": False, "terminal_open": False}):
+            status, _ = self.request("/api/workspaces/panel-test", method="DELETE")
+            self.assertEqual(status, 409)
+            status, _ = self.request("/api/presets", {"id": "test", "name": "Test", "steps": [{"command": "echo new"}]})
+            self.assertEqual(status, 409)
+        self.assert_workspace_unchanged()
+
+    def test_batch_preflight_rejects_before_any_command_starts(self):
+        server.presets["test"]["steps"].append(server.normalize_step({"id": "second", "command": "echo {{missing}}", "terminal": False}, 1))
+        server.sync_workspace(server.workspaces[0])
+        with patch.object(server, "launch_step") as launch:
+            status, body = self.request("/api/workspaces/panel-test/run", {})
+        self.assertEqual(status, 409)
+        self.assertIn("missing", body["error"])
+        launch.assert_not_called()
+
+    def test_batch_stop_continues_after_one_terminal_fails(self):
+        server.presets["test"]["steps"].append(server.normalize_step({"id": "second", "command": "echo ok", "terminal": False}, 1))
+        server.sync_workspace(server.workspaces[0])
+        with patch.object(server, "step_status", return_value={"owned": True, "terminal_open": False}), patch.object(server, "stop_step", side_effect=[server.ApiError(503, "close failed"), None]) as stop:
+            status, body = self.request("/api/workspaces/panel-test/stop", {})
+        self.assertEqual(status, 503)
+        self.assertIn("close failed", body["error"])
+        self.assertEqual(body["failures"], [{"title": "Команда 2", "message": "close failed"}])
+        self.assertEqual(stop.call_count, 2)
+
+    def test_started_steps_are_saved_after_later_launch_failure(self):
+        server.presets["test"]["steps"].append(server.normalize_step({"id": "second", "command": "echo ok", "terminal": False}, 1))
+        server.sync_workspace(server.workspaces[0])
+        def launch(workspace, step_id):
+            if step_id == "second":
+                raise server.ApiError(503, "Terminal unavailable")
+            workspace["steps"][step_id]["status"] = "starting"
+        with patch.object(server, "step_status", return_value={"status": "idle", "owned": False, "terminal_open": False}), patch.object(server, "launch_step", side_effect=launch):
+            status, _ = self.request("/api/workspaces/panel-test/run", {})
+        self.assertEqual(status, 503)
+        disk = json.loads(server.WORKSPACES_FILE.read_text())
+        self.assertEqual(disk["workspaces"][0]["steps"]["command-1"]["status"], "starting")
+
+
     def test_new_launch_does_not_inherit_cached_completion(self):
         workspace = server.workspaces[0]
         workspace["steps"]["command-1"].update(status="starting", started_at=12345)
@@ -83,6 +187,20 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(step["started_at"], 12345)
         self.assertNotIn("return_code", step)
         self.assertFalse(step["terminal_open"])
+
+    def test_selection_does_not_restore_old_starting_status(self):
+        workspace = server.workspaces[0]
+        workspace["steps"]["command-1"].update(status="starting", started_at=12345)
+        base = server.runtime_base("panel-test", "command-1")
+        server.RUNTIME_DIR.mkdir()
+        server.runtime_file(base, ".rc").write_text("2")
+        server.refresh_status_cache()
+        status, state = self.request("/api/workspaces/panel-test/selection", {"selected": False})
+        self.assertEqual(status, 200)
+        step = state["workspaces"][0]["steps"]["command-1"]
+        self.assertEqual(step["status"], "failed")
+        self.assertEqual(step["return_code"], 2)
+        self.assertFalse(step["selected"])
 
 
     def test_foreign_host_is_rejected_for_reads_and_writes(self):

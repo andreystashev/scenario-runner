@@ -23,4 +23,5 @@ jobs:
       - run: python -m unittest -q
       - run: python -m py_compile server.py launcher.py
       - run: bash -n start start.sh stop.sh start.command
-      - run: node --check static/app.js
+      - run: node --check static/app.js && node --check static/api.js && node --check static/ui-model.js && node --check static/i18n.js && node --check static/appearance.js
+      - run: node --test tests/*.test.mjs

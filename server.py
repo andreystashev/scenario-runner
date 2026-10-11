@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 
-APP_VERSION = "0.5.1"
+APP_VERSION = "0.8.0"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path(os.getenv("SCENARIO_RUNNER_CONFIG_DIR", "~/.config/scenario-runner")).expanduser()
@@ -101,9 +101,10 @@ workspaces: list[dict] = []
 
 
 class ApiError(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, *, failures: list[dict] | None = None):
         super().__init__(message)
         self.status = status
+        self.failures = failures
 
 
 def now_iso() -> str:
@@ -136,6 +137,30 @@ def unique_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:12]}"
 
 
+VARIABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
+VARIABLE_TOKEN = re.compile(r"\{\{([A-Za-z_][A-Za-z0-9_.-]*)\}\}")
+RESERVED_VARIABLES = {"project_path", "bag_path", "bag_folder"}
+
+
+def normalize_variables(raw: Any) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        raise ApiError(400, "Переменные должны быть JSON-объектом")
+    result = {}
+    for key, value in raw.items():
+        if not VARIABLE_NAME.fullmatch(str(key)):
+            raise ApiError(400, f"Некорректное имя переменной: {key}")
+        if key in RESERVED_VARIABLES:
+            raise ApiError(400, f"Имя {key} зарезервировано для пути панели")
+        if not isinstance(value, (str, int, float, bool)):
+            raise ApiError(400, f"Значение переменной {key} должно быть текстом или числом")
+        result[str(key)] = str(value)
+    return result
+
+
+def step_is_active(status: dict) -> bool:
+    return bool(status.get("owned") or status.get("terminal_open") or status.get("status") == "starting")
+
+
 def normalize_step(raw: dict, index: int) -> dict:
     legacy_execution = str(raw.get("execution") or "")
     target_id = str(raw.get("target_id") or ("docker" if legacy_execution.startswith("container_") else "local"))
@@ -163,9 +188,11 @@ def normalize_preset(raw: dict, preset_id: str | None = None) -> dict:
     result_steps = []
     used = set()
     for index, item in enumerate(raw_steps):
-        if not isinstance(item, dict) or not str(item.get("command") or "").strip():
+        if not isinstance(item, dict) or not isinstance(item.get("command"), str) or not item["command"].strip():
             raise ApiError(400, f"Введите команду {index + 1}")
         step = normalize_step(item if isinstance(item, dict) else {}, index)
+        if any(key in item and not isinstance(item[key], bool) for key in ("terminal", "selected")):
+            raise ApiError(400, f"Режим и выбор команды {index + 1} должны быть true или false")
         if step["process_match"]:
             try:
                 re.compile(step["process_match"])
@@ -210,9 +237,24 @@ def normalize_target(raw: dict, index: int) -> dict:
     return result
 
 
-def normalize_settings(raw: dict | None) -> dict:
+def normalize_settings(raw: dict | None, *, strict: bool = False) -> dict:
     raw = raw if isinstance(raw, dict) else {}
     incoming_targets = raw.get("targets")
+    if strict:
+        if not isinstance(incoming_targets, list) or not incoming_targets:
+            raise ApiError(400, "Добавьте хотя бы одну цель выполнения")
+        used_ids = set()
+        for item in incoming_targets:
+            if not isinstance(item, dict) or item.get("type") not in ("local", "docker"):
+                raise ApiError(400, "Укажите тип цели: local или docker")
+            target_id = str(item.get("id") or "").strip()
+            if not target_id or safe_id(target_id) != target_id:
+                raise ApiError(400, "Идентификатор цели содержит недопустимые символы")
+            if target_id in used_ids:
+                raise ApiError(400, "Идентификаторы целей должны различаться")
+            if target_id == "local" and item["type"] != "local":
+                raise ApiError(400, "Идентификатор local зарезервирован для локальной цели")
+            used_ids.add(target_id)
     if not isinstance(incoming_targets, list) or not incoming_targets:
         # Migration from Scenario Runner 0.1 settings.
         incoming_targets = copy.deepcopy(DEFAULT_SETTINGS["targets"])
@@ -321,11 +363,32 @@ def target_is_docker(spec_or_target: dict) -> bool:
     return target.get("type") == "docker"
 
 
+def normalize_panel_appearance(raw: Any, *, strict: bool = True) -> dict:
+    """Only allow a small set of presentation values, never arbitrary CSS."""
+    if not isinstance(raw, dict):
+        if strict:
+            raise ApiError(400, "Оформление панели должно быть JSON-объектом")
+        return {}
+    result = {}
+    for key, value in raw.items():
+        valid = (
+            key in ("accent", "surface", "text") and isinstance(value, str)
+            and re.fullmatch(r"#[0-9a-fA-F]{6}", value)
+        ) or (key == "layout" and value in ("grid", "list"))
+        if not valid:
+            if strict:
+                raise ApiError(400, "Некорректное оформление панели")
+            continue
+        result[key] = value.lower() if key != "layout" else value
+    return result
+
+
 def sync_workspace(workspace: dict) -> None:
     preset = preset_for(workspace)
     old = workspace.get("steps") if isinstance(workspace.get("steps"), dict) else {}
     workspace["preset_id"] = preset["id"]
     workspace.setdefault("variables", {})
+    workspace["appearance"] = normalize_panel_appearance(workspace.get("appearance", {}), strict=False)
     workspace["steps"] = {
         spec["id"]: {
             **old.get(spec["id"], {}),
@@ -499,11 +562,12 @@ def command_for(workspace: dict, spec: dict) -> str:
     docker = target_is_docker(target)
     local_workdir = host_workdir(workspace, spec)
     target_workdir = str(target.get("workdir") or "/") if docker else str(local_workdir)
-    command = command.replace("{{project_path}}", shlex.quote(target_workdir))
+    values = {"project_path": target_workdir}
     variables = workspace.get("variables") if isinstance(workspace.get("variables"), dict) else {}
     for key, value in variables.items():
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]*", str(key)):
-            command = command.replace("{{" + str(key) + "}}", shlex.quote(str(value)))
+            if key not in RESERVED_VARIABLES:
+                values[str(key)] = str(value)
     bag_value = str(workspace.get("bag_path") or "").strip()
     if "{{bag_path}}" in command or "{{bag_folder}}" in command:
         if not bag_value:
@@ -519,9 +583,12 @@ def command_for(workspace: dict, spec: dict) -> str:
             except ValueError as exc:
                 raise ApiError(409, "Для Docker-цели путь должен находиться внутри её каталога на хосте") from exc
             bag_path = str(Path(target_workdir) / relative)
-        command = command.replace("{{bag_path}}", shlex.quote(bag_path))
-        command = command.replace("{{bag_folder}}", shlex.quote(bag_path))
-    return command
+        values.update(bag_path=bag_path, bag_folder=bag_path)
+    missing = sorted(set(VARIABLE_TOKEN.findall(command)) - values.keys())
+    if missing:
+        raise ApiError(409, "Заполните переменные в параметрах панели: " + ", ".join(missing))
+    # Substitute once: variable contents may contain literal {{other}} text.
+    return VARIABLE_TOKEN.sub(lambda match: shlex.quote(values[match[1]]), command)
 
 
 def external_pids(workspace: dict, spec: dict, snapshot: dict | None = None) -> list[int]:
@@ -906,6 +973,13 @@ def refresh_status_cache() -> None:
         workspace_copies = copy.deepcopy(workspaces)
         target_copies = copy.deepcopy(settings["targets"])
         revisions = copy.deepcopy(WORKSPACE_REVISIONS)
+    runtime_states = {
+        str(workspace["id"]): {
+            step_id: [step.get("status"), step.get("started_at")]
+            for step_id, step in workspace["steps"].items()
+        }
+        for workspace in workspace_copies
+    }
     snapshots = {
         target["id"]: container_snapshot(target)
         for target in target_copies if target["type"] == "docker"
@@ -919,7 +993,45 @@ def refresh_status_cache() -> None:
         for target in target_copies
     ]
     with STATUS_LOCK:
-        STATUS_CACHE.update({"workspaces": visible, "targets": target_states, "revisions": revisions, "updated_at": now_iso()})
+        STATUS_CACHE.update({"workspaces": visible, "targets": target_states, "revisions": revisions, "runtime_states": runtime_states, "updated_at": now_iso()})
+
+
+def run_workspace(workspace: dict) -> None:
+    chosen = [spec for spec in preset_for(workspace)["steps"] if workspace["steps"][spec["id"]].get("selected")]
+    if not chosen:
+        raise ApiError(409, "Выберите хотя бы одну команду")
+    pending = []
+    for spec in chosen:
+        status = step_status(workspace, spec)
+        if step_is_active(status) or status.get("external"):
+            continue
+        command_for(workspace, spec)
+        if not target_is_docker(spec) and not host_workdir(workspace, spec).is_dir():
+            raise ApiError(409, f"Рабочая папка не найдена: {host_workdir(workspace, spec)}")
+        pending.append(spec)
+    if not pending:
+        return
+    # Preflight every selected command before launching any. If a runtime
+    # failure happens later, persist the commands which already started.
+    try:
+        for spec in pending:
+            launch_step(workspace, spec["id"])
+    finally:
+        save_workspaces(workspace)
+
+
+def stop_workspace(workspace: dict) -> None:
+    errors = []
+    for spec in reversed(preset_for(workspace)["steps"]):
+        if step_is_active(step_status(workspace, spec)):
+            try:
+                stop_step(workspace, spec["id"])
+            except ApiError as exc:
+                errors.append({"title": spec["title"], "message": str(exc)})
+    save_workspaces(workspace)
+    if errors:
+        details = "; ".join(f"{item['title']}: {item['message']}" for item in errors)
+        raise ApiError(503, "Не все команды остановлены. " + details, failures=errors)
 
 
 def status_worker() -> None:
@@ -943,12 +1055,16 @@ def state_payload() -> dict:
             item = copy.deepcopy(workspace)
             item["preset"] = copy.deepcopy(preset_for(workspace))
             cached_steps = old.get("steps", {}) if old.get("preset_id") == workspace.get("preset_id") else {}
-            fresh = WORKSPACE_REVISIONS.get(str(workspace["id"]), 0) > cached.get("revisions", {}).get(str(workspace["id"]), 0)
+            cached_runtime = cached.get("runtime_states", {}).get(str(workspace["id"]), {})
             item["steps"] = {}
             for spec in item["preset"]["steps"]:
                 step = {**workspace["steps"][spec["id"]], **cached_steps.get(spec["id"], {"status": "idle", "message": "Статус обновляется…", "owned": False, "terminal_open": False, "external": False, "log_tail": ""})}
                 step["selected"] = workspace["steps"][spec["id"]]["selected"]
-                if fresh:
+                stored = workspace["steps"][spec["id"]]
+                # Configuration edits must not replace an observed completion
+                # with the old persisted "starting" status. Override only a
+                # launch/stop transition not yet observed by the status worker.
+                if [stored.get("status"), stored.get("started_at")] != cached_runtime.get(spec["id"]):
                     step["status"] = workspace["steps"][spec["id"]]["status"]
                     step["message"] = workspace["steps"][spec["id"]]["message"]
                     if step["status"] == "starting":
@@ -985,7 +1101,7 @@ class LocalServer(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ScenarioRunner/0.1"
+    server_version = f"ScenarioRunner/{APP_VERSION}"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         LOG.info("%s - %s", self.address_string(), fmt % args)
@@ -1082,7 +1198,7 @@ class Handler(BaseHTTPRequestHandler):
                 if parts == ["api", "settings"]:
                     if "targets" not in body or not isinstance(body["targets"], list):
                         raise ApiError(400, "Передайте список целей выполнения")
-                    normalized = normalize_settings({"targets": body["targets"]})
+                    normalized = normalize_settings({"targets": body["targets"]}, strict=True)
                     available = {target["id"] for target in normalized["targets"]}
                     required = {str(step.get("target_id") or "local") for preset in presets.values() for step in preset["steps"]}
                     missing = sorted(required - available)
@@ -1093,7 +1209,7 @@ class Handler(BaseHTTPRequestHandler):
                         for spec in preset_for(workspace)["steps"]:
                             if spec["target_id"] in changed:
                                 status = step_status(workspace, spec)
-                                if status["owned"] or status["terminal_open"] or status.get("status") == "starting":
+                                if step_is_active(status):
                                     raise ApiError(409, "Сначала завершите команды изменяемой цели")
                     atomic_json(SETTINGS_FILE, normalized)
                     settings.clear()
@@ -1105,7 +1221,7 @@ class Handler(BaseHTTPRequestHandler):
                             if workspace.get("preset_id") != preset_id:
                                 continue
                             if any(
-                                (status := step_status(workspace, spec))["owned"] or status["terminal_open"]
+                                step_is_active(step_status(workspace, spec))
                                 for spec in preset_for(workspace)["steps"]
                             ):
                                 raise ApiError(409, "Пресет сейчас выполняется. Сначала завершите его команды")
@@ -1128,7 +1244,8 @@ class Handler(BaseHTTPRequestHandler):
                     workspace = {
                         "id": unique_id("panel"), "name": name[:160],
                         "bag_path": str(body.get("bag_path") or "").strip(),
-                        "variables": body.get("variables") if isinstance(body.get("variables"), dict) else {},
+                        "variables": normalize_variables(body.get("variables", {})),
+                        "appearance": normalize_panel_appearance(body.get("appearance", {})),
                         "preset_id": preset_id, "created_at": now_iso(), "steps": {},
                     }
                     sync_workspace(workspace)
@@ -1140,13 +1257,15 @@ class Handler(BaseHTTPRequestHandler):
                         workspace["name"] = str(body["name"]).strip()[:160]
                     if "bag_path" in body:
                         workspace["bag_path"] = str(body["bag_path"]).strip()
-                    if "variables" in body and isinstance(body["variables"], dict):
-                        workspace["variables"] = {str(key): str(value) for key, value in body["variables"].items()}
+                    if "variables" in body:
+                        workspace["variables"] = normalize_variables(body["variables"])
+                    if "appearance" in body:
+                        workspace["appearance"] = normalize_panel_appearance(body["appearance"])
                     if "preset_id" in body:
                         if body["preset_id"] not in presets:
                             raise ApiError(404, "Пресет не найден")
                         if any(
-                            (status := step_status(workspace, spec))["owned"] or status["terminal_open"]
+                            step_is_active(step_status(workspace, spec))
                             for spec in preset_for(workspace)["steps"]
                         ):
                             raise ApiError(409, "Сначала завершите активные команды")
@@ -1154,13 +1273,23 @@ class Handler(BaseHTTPRequestHandler):
                         workspace["steps"] = {}
                         sync_workspace(workspace)
                     commit_workspace(workspace, previous)
+                elif len(parts) == 4 and parts[:2] == ["api", "workspaces"] and parts[3] == "selection":
+                    previous = self.workspace(parts[2])
+                    if not isinstance(body.get("selected"), bool):
+                        raise ApiError(400, "Передайте selected: true или false")
+                    workspace = copy.deepcopy(previous)
+                    for step in workspace["steps"].values():
+                        step["selected"] = body["selected"]
+                    commit_workspace(workspace, previous)
                 elif len(parts) == 6 and parts[:2] == ["api", "workspaces"] and parts[3] == "steps" and parts[5] == "select":
+                    if not isinstance(body.get("selected"), bool):
+                        raise ApiError(400, "Передайте selected: true или false")
                     previous = self.workspace(parts[2])
                     workspace = copy.deepcopy(previous)
                     step_id = parts[4]
                     if step_id not in workspace["steps"]:
                         raise ApiError(404, "Команда не найдена")
-                    workspace["steps"][step_id]["selected"] = bool(body.get("selected"))
+                    workspace["steps"][step_id]["selected"] = body["selected"]
                     commit_workspace(workspace, previous)
                 elif len(parts) == 6 and parts[:2] == ["api", "workspaces"] and parts[3] == "steps" and parts[5] == "run":
                     workspace = self.workspace(parts[2])
@@ -1171,27 +1300,17 @@ class Handler(BaseHTTPRequestHandler):
                     stop_step(workspace, parts[4])
                     save_workspaces(workspace)
                 elif len(parts) == 4 and parts[:2] == ["api", "workspaces"] and parts[3] == "run":
-                    workspace = self.workspace(parts[2])
-                    chosen = [spec for spec in preset_for(workspace)["steps"] if workspace["steps"][spec["id"]].get("selected")]
-                    if not chosen:
-                        raise ApiError(409, "Выберите хотя бы одну команду")
-                    for spec in chosen:
-                        state = step_status(workspace, spec)
-                        if not state["owned"] and not state["terminal_open"] and not state["external"]:
-                            launch_step(workspace, spec["id"])
-                    save_workspaces(workspace)
+                    run_workspace(self.workspace(parts[2]))
                 elif len(parts) == 4 and parts[:2] == ["api", "workspaces"] and parts[3] == "stop":
-                    workspace = self.workspace(parts[2])
-                    for spec in reversed(preset_for(workspace)["steps"]):
-                        state = step_status(workspace, spec)
-                        if state["owned"] or state["terminal_open"]:
-                            stop_step(workspace, spec["id"])
-                    save_workspaces(workspace)
+                    stop_workspace(self.workspace(parts[2]))
                 else:
                     raise ApiError(404, "Метод API не найден")
             self.json_response(state_payload())
         except ApiError as exc:
-            self.json_response({"error": str(exc)}, exc.status)
+            payload = {"error": str(exc)}
+            if exc.failures is not None:
+                payload["failures"] = exc.failures
+            self.json_response(payload, exc.status)
         except Exception as exc:
             LOG.error("Необработанная ошибка: %s\n%s", exc, traceback.format_exc())
             self.json_response({"error": f"Внутренняя ошибка: {exc}"}, 500)
@@ -1205,7 +1324,7 @@ class Handler(BaseHTTPRequestHandler):
                     workspace = self.workspace(parts[2])
                     for spec in preset_for(workspace)["steps"]:
                         state = step_status(workspace, spec)
-                        if state["owned"] or state["terminal_open"]:
+                        if step_is_active(state):
                             raise ApiError(409, "Сначала завершите команды этой панели")
                     remaining = [item for item in workspaces if item is not workspace]
                     atomic_json(WORKSPACES_FILE, {"version": 1, "workspaces": remaining})
