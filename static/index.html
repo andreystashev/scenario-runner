@@ -1,98 +1,350 @@
 <!doctype html>
 <html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Scenario Runner</title>
-  <link rel="stylesheet" href="/app.css">
-</head>
-<body>
-  <header class="topbar">
-    <a class="brand" href="/"><span class="brand-mark">▶</span><span>SCENARIO</span><strong>RUNNER</strong><small id="version"></small></a>
-    <div class="top-actions">
-      <span id="containerStatus" class="container-status"></span>
-      <button class="button secondary" id="refreshButton">↻ Обновить</button>
-      <button class="button primary" id="presetsButton">Редактор сценариев</button>
-      <button class="icon-button" id="settingsButton" title="Настройки">⚙</button>
-    </div>
-  </header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Scenario Runner</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/"
+        ><span class="brand-mark">▶</span><span>SCENARIO</span
+        ><strong>RUNNER</strong><small id="version"></small
+      ></a>
+      <div class="top-actions">
+        <span id="containerStatus" class="container-status" role="status"
+          >Подключение…</span
+        >
+        <button class="button secondary" id="refreshButton">↻ Обновить</button>
+        <button class="button primary" id="presetsButton">
+          Редактор сценариев
+        </button>
+        <button class="icon-button" id="settingsButton" title="Настройки">
+          ⚙
+        </button>
+      </div>
+    </header>
 
-  <main>
-    <section class="intro">
-      <div><h1>Сценарии</h1><p>Команды и последовательности для локальной системы и контейнеров.</p></div>
-      <button class="button create" id="createButton">＋ Панель</button>
-    </section>
+    <main>
+      <section class="intro">
+        <div>
+          <p class="eyebrow">Локальное рабочее пространство</p>
+          <h1>Команды под рукой</h1>
+          <p>Повторяемые задачи для вашего компьютера и Docker-контейнеров.</p>
+        </div>
+        <button class="button create" id="createButton">＋ Панель</button>
+      </section>
 
-    <section id="createPanel" class="create-panel hidden">
-      <div class="field"><label>Название панели</label><input id="newName" placeholder="Например, разбор светофора"></div>
-      <div class="field"><label>Основной путь <span>необязательно</span></label><input id="newBag" placeholder="Папка проекта, данных или бэга"></div>
-      <div class="field"><label>Пресет</label><select id="newPreset"></select></div>
-      <div class="create-actions"><button class="button secondary" id="cancelCreate">Отмена</button><button class="button primary" id="confirmCreate">Создать</button></div>
-    </section>
+      <div id="connectionBanner" class="connection-banner hidden" role="alert">
+        <span>Нет связи с сервером. Статусы могут быть устаревшими.</span
+        ><button id="retryConnection" class="text-button">Повторить</button>
+      </div>
+      <section class="overview" aria-label="Обзор">
+        <div>
+          <strong id="panelCount">—</strong><span>рабочих панелей</span>
+        </div>
+        <div>
+          <strong id="activeCount">—</strong><span>активных команд</span>
+        </div>
+        <div><strong id="failedCount">—</strong><span>с ошибкой</span></div>
+      </section>
+      <div class="list-toolbar">
+        <label class="search-field"
+          ><span aria-hidden="true">⌕</span
+          ><input
+            type="search"
+            id="searchPanels"
+            placeholder="Найти панель, сценарий или команду"
+            aria-label="Поиск панелей"
+        /></label>
+        <div class="filter-tabs" aria-label="Фильтр панелей">
+          <button data-filter="all" class="active" aria-pressed="true">
+            Все</button
+          ><button data-filter="active" aria-pressed="false">Активные</button
+          ><button data-filter="failed" aria-pressed="false">С ошибками</button>
+        </div>
+        <span id="filterCount" class="result-count"></span>
+      </div>
+      <section id="createPanel" class="create-panel hidden">
+        <div class="field">
+          <label>Название панели</label
+          ><input id="newName" placeholder="Например, разбор светофора" />
+        </div>
+        <div class="field">
+          <label>Основной путь <span>необязательно</span></label
+          ><input id="newBag" placeholder="Папка проекта, данных или бэга" />
+        </div>
+        <div class="field">
+          <label>Пресет</label
+          ><select id="newPreset"></select>
+        </div>
+        <div class="create-actions">
+          <button class="button secondary" id="cancelCreate">Отмена</button
+          ><button class="button primary" id="confirmCreate">Создать</button>
+        </div>
+      </section>
 
-    <section id="workspaceList" class="workspace-list"></section>
-    <section id="emptyState" class="empty-state hidden">
-      <div class="empty-icon">▷</div><h2>Нет панелей</h2>
-      <p>Сначала создайте сценарий в редакторе, затем добавьте панель для его запуска.</p>
-    </section>
-  </main>
+      <section id="workspaceList" class="workspace-list"></section>
+      <section id="emptyState" class="empty-state hidden">
+        <div class="empty-icon">⌘</div>
+        <h2 id="emptyTitle">Загрузка панелей…</h2>
+        <p id="emptyHint"></p>
+        <button id="emptyAction" class="button primary">
+          Создать первый сценарий
+        </button>
+      </section>
+      <section id="filterEmpty" class="empty-state hidden">
+        <h2>Ничего не найдено</h2>
+        <p>Попробуйте другой запрос или покажите все панели.</p>
+        <button class="button secondary" id="clearFilters">
+          Сбросить фильтры
+        </button>
+      </section>
+      <p class="page-hint">
+        Команды выполняются на вашем компьютере. Закрытие браузера их не
+        останавливает.
+      </p>
+    </main>
 
-  <div id="drawerBackdrop" class="backdrop hidden"></div>
-  <aside id="presetDrawer" class="drawer" aria-hidden="true">
-    <div class="drawer-head"><div><p class="eyebrow">Конструктор</p><h2>Пресеты сценариев</h2></div><button class="icon-button close-drawer">×</button></div>
-    <div class="preset-tabs" id="presetTabs"></div>
-    <div class="form-grid two"><div class="field"><label>Название</label><input id="presetName"></div><div class="field"><label>Описание</label><input id="presetDescription"></div></div>
-    <div class="field"><label>Рабочая папка этого пресета <span>пусто — папка выбранной цели</span></label><input id="presetProject" placeholder="Например: ~/projects/my-tool"></div>
-    <div class="section-title"><div><h3>Команды</h3><p>Выполняются сверху вниз. Доступны <code>{{project_path}}</code>, <code>{{bag_path}}</code>, <code>{{bag_folder}}</code>.</p></div><button class="button secondary small" id="addStep">＋ Команда</button></div>
-    <div id="stepEditor" class="step-editor"></div>
-    <div id="presetFeedback" class="feedback"></div>
-    <div class="drawer-footer">
-      <button class="button primary" id="savePreset">Сохранить</button>
-      <button class="button secondary" id="exportPreset">Экспорт JSON</button>
-      <label class="button secondary file-button">Импорт JSON<input type="file" id="importPreset" accept="application/json,.json"></label>
-      <button class="button danger ghost" id="deletePreset">Удалить</button>
-    </div>
-  </aside>
-
-  <div id="settingsModal" class="modal-wrap hidden">
-    <div class="modal settings-modal">
-      <div class="drawer-head"><div><p class="eyebrow">Персонализация и окружения</p><h2>Настройки</h2></div><button class="icon-button close-settings">×</button></div>
-      <div class="settings-section">
-        <h3>Внешний вид</h3>
-        <div class="appearance-grid">
-          <div class="field"><label>Тема</label><div class="segmented"><button data-theme-choice="dark">Тёмная</button><button data-theme-choice="light">Светлая</button></div></div>
-          <div class="field"><label>Акцент</label><input type="color" id="appearanceAccent"></div>
-          <div class="field"><label>Фон</label><input type="color" id="appearanceBackground"></div>
-          <div class="field"><label>Панели</label><input type="color" id="appearanceSurface"></div>
-          <div class="field"><label>Текст</label><input type="color" id="appearanceText"></div>
-          <div class="field"><label>Шрифт</label><select id="appearanceFont"><option value="system">Системный</option><option value="mono">Моноширинный</option><option value="serif">С засечками</option><option value="custom">Свой</option></select></div>
-          <div class="field"><label>Название своего шрифта</label><input id="appearanceCustomFont" placeholder="Например: Ubuntu Sans"></div>
-          <div class="field range-field"><label>Масштаб шрифта <strong id="fontScaleValue"></strong></label><input type="range" id="appearanceFontScale" min="0.9" max="1.5" step="0.05"></div>
-          <div class="field"><label>Плотность</label><div class="segmented"><button data-density-choice="compact">Компактно</button><button data-density-choice="comfortable">Свободно</button></div></div>
-          <div class="field range-field"><label>Прозрачность панелей <strong id="opacityValue"></strong></label><input type="range" id="appearanceOpacity" min="0.72" max="1" step="0.02"></div>
-          <label class="check-row"><input type="checkbox" id="appearanceGlass"> Размытие фона панелей</label>
+    <div id="drawerBackdrop" class="backdrop hidden"></div>
+    <aside
+      id="presetDrawer"
+      class="drawer hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="editorTitle"
+      aria-hidden="true"
+      inert
+    >
+      <div class="drawer-head">
+        <div>
+          <p class="eyebrow">Конструктор</p>
+          <h2 id="editorTitle">Редактор сценариев</h2>
+        </div>
+        <button class="icon-button close-drawer" aria-label="Закрыть редактор">
+          ×
+        </button>
+      </div>
+      <div class="preset-tabs" id="presetTabs"></div>
+      <div class="form-grid two">
+        <div class="field">
+          <label>Название</label><input id="presetName" />
+        </div>
+        <div class="field">
+          <label>Описание</label><input id="presetDescription" />
         </div>
       </div>
-      <div class="settings-section">
-        <div class="section-title"><div><h3>Цели выполнения</h3><p>Локальная система или произвольные Docker-контейнеры.</p></div><button class="button secondary small" id="addTarget">＋ Цель</button></div>
-        <div id="targetEditor" class="target-editor"></div>
+      <div class="field">
+        <label
+          >Рабочая папка этого пресета
+          <span>пусто — папка выбранной цели</span></label
+        ><input id="presetProject" placeholder="Например: ~/projects/my-tool" />
       </div>
-      <div class="modal-actions"><button class="button secondary close-settings">Отмена</button><button class="button primary" id="saveSettings">Сохранить</button></div>
-    </div>
-  </div>
+      <div class="section-title">
+        <div>
+          <h3>Команды</h3>
+          <p>
+            Запускаются по порядку, без ожидания завершения. Переменные
+            <code>{{project_path}}</code>, <code>{{bag_path}}</code>,
+            <code>{{bag_folder}}</code>.
+          </p>
+        </div>
+        <button class="button secondary small" id="addStep">＋ Команда</button>
+      </div>
+      <div id="stepEditor" class="step-editor"></div>
+      <div id="presetFeedback" class="feedback"></div>
+      <div class="drawer-footer">
+        <button class="button primary" id="savePreset">Сохранить</button>
+        <button class="button secondary" id="duplicatePreset">
+          ⧉ Создать копию
+        </button>
+        <button class="button secondary" id="exportPreset">Экспорт JSON</button>
+        <label class="button secondary file-button"
+          >Импорт JSON<input
+            type="file"
+            id="importPreset"
+            accept="application/json,.json"
+        /></label>
+        <button class="button danger ghost" id="deletePreset">Удалить</button>
+      </div>
+    </aside>
 
-  <div id="variablesModal" class="modal-wrap hidden">
-    <div class="modal">
-      <div class="drawer-head"><div><p class="eyebrow">Контекст панели</p><h2>Переменные команды</h2></div><button class="icon-button close-variables">×</button></div>
-      <p class="hint">Используйте значения в командах как <code>{{имя}}</code>. Основной путь также доступен как <code>{{bag_path}}</code>.</p>
-      <div class="field"><label>Основной путь</label><input id="workspaceBagPath" placeholder="Необязательно"></div>
-      <div id="variablesEditor" class="variables-editor"></div>
-      <button class="button secondary small" id="addVariable">＋ Переменная</button>
-      <div class="modal-actions"><button class="button secondary close-variables">Отмена</button><button class="button primary" id="saveVariables">Сохранить</button></div>
+    <div
+      id="settingsModal"
+      class="modal-wrap hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settingsTitle"
+      aria-hidden="true"
+      inert
+    >
+      <div class="modal settings-modal">
+        <div class="drawer-head">
+          <div>
+            <p class="eyebrow">Персонализация и окружения</p>
+            <h2 id="settingsTitle">Настройки</h2>
+          </div>
+          <button
+            class="icon-button close-settings"
+            aria-label="Закрыть настройки"
+          >
+            ×
+          </button>
+        </div>
+        <div class="settings-section">
+          <h3>Внешний вид</h3>
+          <div class="appearance-grid">
+            <div class="field">
+              <label>Тема</label>
+              <div class="segmented">
+                <button data-theme-choice="dark">Тёмная</button
+                ><button data-theme-choice="light">Светлая</button>
+              </div>
+            </div>
+            <div class="field">
+              <label>Акцент</label><input type="color" id="appearanceAccent" />
+            </div>
+            <div class="field">
+              <label>Фон</label><input type="color" id="appearanceBackground" />
+            </div>
+            <div class="field">
+              <label>Панели</label><input type="color" id="appearanceSurface" />
+            </div>
+            <div class="field">
+              <label>Текст</label><input type="color" id="appearanceText" />
+            </div>
+            <div class="field">
+              <label>Шрифт</label
+              ><select id="appearanceFont">
+                <option value="system">Системный</option>
+                <option value="mono">Моноширинный</option>
+                <option value="serif">С засечками</option>
+                <option value="custom">Свой</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Название своего шрифта</label
+              ><input
+                id="appearanceCustomFont"
+                placeholder="Например: Ubuntu Sans"
+              />
+            </div>
+            <div class="field range-field">
+              <label>Масштаб шрифта <strong id="fontScaleValue"></strong></label
+              ><input
+                type="range"
+                id="appearanceFontScale"
+                min="0.9"
+                max="1.5"
+                step="0.05"
+              />
+            </div>
+            <div class="field">
+              <label>Плотность</label>
+              <div class="segmented">
+                <button data-density-choice="compact">Компактно</button
+                ><button data-density-choice="comfortable">Свободно</button>
+              </div>
+            </div>
+            <div class="field range-field">
+              <label
+                >Прозрачность панелей <strong id="opacityValue"></strong></label
+              ><input
+                type="range"
+                id="appearanceOpacity"
+                min="0.72"
+                max="1"
+                step="0.02"
+              />
+            </div>
+            <label class="check-row"
+              ><input type="checkbox" id="appearanceGlass" /> Размытие фона
+              панелей</label
+            >
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="section-title">
+            <div>
+              <h3>Цели выполнения</h3>
+              <p>
+                Подготовка цели выполняется перед каждой командой. Для обычных
+                задач оставьте её пустой.
+              </p>
+            </div>
+            <button class="button secondary small" id="addTarget">
+              ＋ Цель
+            </button>
+          </div>
+          <div id="targetEditor" class="target-editor"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="button secondary close-settings">Отмена</button
+          ><button class="button primary" id="saveSettings">Сохранить</button>
+        </div>
+      </div>
     </div>
-  </div>
 
-  <div id="toast" class="toast"></div>
-  <script src="/app.js"></script>
-</body>
+    <div
+      id="variablesModal"
+      class="modal-wrap hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="parametersTitle"
+      aria-hidden="true"
+      inert
+    >
+      <div class="modal">
+        <div class="drawer-head">
+          <div>
+            <p class="eyebrow">Контекст панели</p>
+            <h2 id="parametersTitle">Параметры панели</h2>
+          </div>
+          <button
+            class="icon-button close-variables"
+            aria-label="Закрыть параметры"
+          >
+            ×
+          </button>
+        </div>
+        <div class="form-grid two">
+          <div class="field">
+            <label>Название панели</label
+            ><input id="workspaceName" maxlength="160" />
+          </div>
+          <div class="field">
+            <label>Сценарий</label
+            ><select id="workspacePreset"></select>
+          </div>
+        </div>
+        <p class="hint">
+          Используйте значения в командах как <code>{{имя}}</code>. Пишите
+          переменные без дополнительных кавычек: значения экранируются
+          автоматически. Основной путь доступен как <code>{{bag_path}}</code>.
+        </p>
+        <div class="field">
+          <label>Основной путь</label
+          ><input id="workspaceBagPath" placeholder="Необязательно" />
+        </div>
+        <div id="variablesEditor" class="variables-editor"></div>
+        <button class="button secondary small" id="addVariable">
+          ＋ Переменная
+        </button>
+        <div class="modal-actions">
+          <button class="button secondary close-variables">Отмена</button
+          ><button class="button primary" id="saveVariables">Сохранить</button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="toast"
+      class="toast"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    ></div>
+    <script type="module" src="/app.js"></script>
+  </body>
 </html>

@@ -93,6 +93,17 @@ class ScenarioRunnerTests(unittest.TestCase):
         spec = {"command": "echo {{message}}", "target_id": "local", "terminal": False}
         self.assertEqual(server.command_for(self.workspace, spec), "echo 'hello world'")
 
+    def test_variable_contents_are_not_recursively_expanded(self):
+        self.workspace["variables"] = {"first": "{{second}}", "second": "replaced"}
+        spec = {"command": "echo {{first}}", "target_id": "local", "terminal": False}
+        self.assertEqual(server.command_for(self.workspace, spec), "echo '{{second}}'")
+
+    def test_missing_variable_is_reported_before_launch(self):
+        spec = {"command": "echo {{missing}}", "target_id": "local", "terminal": False}
+        with self.assertRaisesRegex(server.ApiError, "missing"):
+            server.command_for(self.workspace, spec)
+
+
     def test_missing_target_never_falls_back_to_local(self):
         with self.assertRaises(server.ApiError):
             server.target_for({"target_id": "removed-container"})

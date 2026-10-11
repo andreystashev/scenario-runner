@@ -1,0 +1,12 @@
+{
+  "name": "scenario-runner-ui-checks",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check static/app.js && node --check static/api.js && node --check static/ui-model.js"
+  }
+}
