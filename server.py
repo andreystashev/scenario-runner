@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scenario Runner: native Ubuntu scenario launcher with a local web UI."""
+"""Scenario Runner: local macOS/Linux scenario launcher."""
 
 from __future__ import annotations
 
@@ -13,12 +13,15 @@ import re
 import shlex
 import shutil
 import signal
+import socket
+import sys
 import subprocess
 import threading
 import tempfile
 import time
 import traceback
 import urllib.parse
+import uuid
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.5.0"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path(os.getenv("SCENARIO_RUNNER_CONFIG_DIR", "~/.config/scenario-runner")).expanduser()
@@ -129,7 +132,7 @@ def safe_id(value: str, fallback: str = "item") -> str:
 
 
 def unique_id(prefix: str) -> str:
-    return f"{prefix}-{int(time.time() * 1000):x}"
+    return f"{prefix}-{uuid.uuid4().hex[:12]}"
 
 
 def normalize_step(raw: dict, index: int) -> dict:
@@ -159,7 +162,14 @@ def normalize_preset(raw: dict, preset_id: str | None = None) -> dict:
     result_steps = []
     used = set()
     for index, item in enumerate(raw_steps):
+        if not isinstance(item, dict) or not str(item.get("command") or "").strip():
+            raise ApiError(400, f"Введите команду {index + 1}")
         step = normalize_step(item if isinstance(item, dict) else {}, index)
+        if step["process_match"]:
+            try:
+                re.compile(step["process_match"])
+            except re.error as exc:
+                raise ApiError(400, f"Некорректный regex команды {index + 1}: {exc}")
         base, candidate, number = step["id"], step["id"], 2
         while candidate in used:
             candidate = f"{base}-{number}"
@@ -353,7 +363,22 @@ def process_alive(pid: int) -> bool:
 def file_pid(path: Path) -> int | None:
     try:
         value = int(path.read_text(encoding="utf-8").strip())
-        return value if process_alive(value) else None
+        if not process_alive(value):
+            return None
+        # A stale PID file must never turn an unrelated process into our own.
+        result = run(["ps", "-ww", "-p", str(value), "-o", "stat=,command="])
+        fields = result.stdout.strip().split(None, 1)
+        if len(fields) != 2 or fields[0].startswith("Z"):
+            return None
+        command = fields[1]
+        if re.match(r"(?:\S*/)?bash\s+-lc\s", command) and f"echo $$ > {shlex.quote(str(path))}" in command:
+            return value
+        if str(path).endswith(".pid") and not str(path).endswith(".shell.pid"):
+            shell_path = Path(str(path)[:-4] + ".shell.pid")
+            shell = file_pid(shell_path)
+            if shell and value != shell and value in descendants(shell):
+                return value
+        return None
     except (OSError, ValueError):
         return None
 
@@ -371,7 +396,9 @@ def tail(path: Path, amount: int = 3000) -> str:
 def run(args: list[str], timeout: float = 4) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args, 124, "", f"{Path(args[0]).name}: нет ответа за {timeout:g} секунд")
+    except OSError as exc:
         return subprocess.CompletedProcess(args, 127, "", str(exc))
 
 
@@ -547,6 +574,10 @@ def step_status(workspace: dict, spec: dict, snapshot: dict | None = None) -> di
         return {"status": "stopped", "message": "Остановлено пользователем", "owned": False, "terminal_open": False, "external": False, "log_tail": log}
     if rc is not None:
         return {"status": "stopped" if rc == 0 else "failed", "message": f"Команда завершена, код {rc}", "owned": False, "terminal_open": False, "external": False, "return_code": rc, "log_tail": log}
+    stored = workspace.get("steps", {}).get(spec["id"], {})
+    if stored.get("status") == "starting":
+        pending = time.time() - stored.get("started_at", 0) < 5
+        return {"status": "starting" if pending else "failed", "message": "Команда запускается…" if pending else "Процесс не появился. Проверьте терминал и повторите запуск.", "owned": False, "terminal_open": False, "external": False, "log_tail": log}
     return {"status": "idle", "message": "Готово к запуску", "owned": False, "terminal_open": False, "external": False, "log_tail": log}
 
 
@@ -572,8 +603,7 @@ def terminal_executable() -> str:
     return value
 
 
-def open_terminal(title: str, command: str, hold_on_error: bool = False) -> None:
-    terminal = terminal_executable()
+def open_terminal(title: str, command: str, hold_on_error: bool = False) -> dict | None:
     if hold_on_error:
         command = (
             f"{command}; runner_outer_rc=$?; "
@@ -581,11 +611,67 @@ def open_terminal(title: str, command: str, hold_on_error: bool = False) -> None
             "printf '\n[Scenario Runner] Не удалось начать выполнение, код %s. "
             "Терминал оставлен открытым для диагностики.\n' \"$runner_outer_rc\"; exec bash -i; fi"
         )
+    if sys.platform == "darwin":
+        title = title[:120] + " [" + uuid.uuid4().hex[:8] + "]"
+        # Arguments are data, never interpolated into AppleScript source.
+        script = '''on run argv
+tell application "Terminal"
+    set runnerTab to do script (item 1 of argv)
+    set custom title of runnerTab to (item 2 of argv)
+    activate
+    return tty of runnerTab
+end tell
+end run'''
+        result = run(["/usr/bin/osascript", "-e", script,
+                      "exec " + shlex.join(["bash", "-lc", command]), title[:140]], timeout=30)
+        if result.returncode:
+            raise ApiError(503, "Не удалось открыть Terminal.app. Разрешите управление Terminal "
+                           "в настройках macOS → Конфиденциальность и безопасность → Автоматизация. "
+                           + result.stderr.strip())
+        return {"tty": result.stdout.strip(), "title": title}
+    terminal = terminal_executable()
     if Path(terminal).name == "gnome-terminal":
         argv = [terminal, "--wait", f"--title={title[:140]}", "--", "bash", "-lc", command]
     else:
         argv = [terminal, "-T", title[:140], "-e", "bash", "-lc", command]
     subprocess.Popen(argv, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return None
+
+
+def remember_terminal(base: Path, locator: dict | None) -> None:
+    if locator and re.fullmatch(r"/dev/ttys\w+", locator.get("tty", "")):
+        atomic_json(runtime_file(base, ".terminal.json"), locator)
+
+
+def close_mac_terminal(base: Path) -> None:
+    path = runtime_file(base, ".terminal.json")
+    if sys.platform != "darwin" or not path.exists():
+        return
+    try:
+        locator = json.loads(path.read_text(encoding="utf-8"))
+        tty, title = locator["tty"], locator["title"]
+        if not re.fullmatch(r"/dev/ttys\w+", tty) or not isinstance(title, str):
+            return
+    except (OSError, ValueError, KeyError, TypeError):
+        return
+    # Match both the device and the unique title: TTY devices can be reused.
+    script = '''on run argv
+ tell application "Terminal"
+    repeat with runnerWindow in windows
+        repeat with i from (count of tabs of runnerWindow) to 1 by -1
+            set runnerTab to tab i of runnerWindow
+            if (tty of runnerTab is (item 1 of argv)) and (custom title of runnerTab is (item 2 of argv)) then
+                if not busy of runnerTab then close runnerTab
+                return
+            end if
+        end repeat
+    end repeat
+end tell
+end run'''
+    result = run(["/usr/bin/osascript", "-e", script, tty, title], timeout=5)
+    if result.returncode:
+        LOG.warning("Не удалось закрыть вкладку Terminal: %s", result.stderr.strip())
+    path.unlink(missing_ok=True)
 
 
 def ensure_target(workspace: dict, spec: dict) -> None:
@@ -598,7 +684,7 @@ def ensure_target(workspace: dict, spec: dict) -> None:
         raise ApiError(409, f"Контейнер {target['container_name']} остановлен, а команда запуска цели не настроена")
     if not workdir.is_dir():
         raise ApiError(409, f"Рабочая папка цели не найдена: {workdir}")
-    command = f"cd {shlex.quote(str(workdir))}; {start_command}"
+    command = f"cd {shlex.quote(str(workdir))} && {start_command}"
     open_terminal(f"Scenario Runner · {target['name']}", command)
     deadline = time.monotonic() + 35
     while time.monotonic() < deadline:
@@ -629,15 +715,19 @@ def launch_step(workspace: dict, step_id: str) -> None:
         raise ApiError(409, "Команда уже запущена вне Scenario Runner; новый экземпляр не создан")
     if current["owned"] or current["terminal_open"]:
         raise ApiError(409, "Команда или её терминал уже открыты")
+    if current["status"] == "starting":
+        raise ApiError(409, "Команда уже запускается; дождитесь обновления статуса")
     target = target_for(spec)
     docker = target_is_docker(target)
+    if not docker and not host_workdir(workspace, spec).is_dir():
+        raise ApiError(409, f"Рабочая папка не найдена: {host_workdir(workspace, spec)}")
     if docker:
         ensure_target(workspace, spec)
         validate_container_workdir(target)
     command = command_for(workspace, spec)
     terminal = bool(spec.get("terminal", True))
     base = runtime_base(str(workspace["id"]), step_id)
-    for suffix in (".pid", ".shell.pid", ".rc"):
+    for suffix in (".pid", ".shell.pid", ".rc", ".terminal.json"):
         runtime_file(base, suffix).unlink(missing_ok=True)
     if docker:
         prefix = f"/tmp/scenario-runner-{safe_id(str(workspace['id']))}-{safe_id(step_id)}"
@@ -654,11 +744,11 @@ def launch_step(workspace: dict, step_id: str) -> None:
             f"runner_pid=$!; echo $runner_pid > {shlex.quote(prefix + '.pid')}; fg %1; runner_rc=$?; "
             f"rm -f {shlex.quote(prefix + '.pid')}; echo $runner_rc > {shlex.quote(prefix + '.rc')}; "
             "else runner_rc=127; printf '\n[Scenario Runner] Не удалось подготовить окружение цели.\n'; fi; "
-            "printf '\n[Scenario Runner] Команда завершена, код %s. Терминал остаётся открытым.\n' \"$runner_rc\"; bash -i"
+            "printf '\n[Scenario Runner] Команда завершена, код %s. Терминал остаётся открытым.\n' \"$runner_rc\"; bash -i; exit $?"
         )
         if terminal:
             argv = ["docker", "exec", "-it", "-w", target["workdir"], target["container_name"], "bash", "-lc", inner]
-            open_terminal(f"Scenario Runner · {spec['title']}", shlex.join(argv), hold_on_error=True)
+            remember_terminal(base, open_terminal(f"Scenario Runner · {spec['title']}", shlex.join(argv), hold_on_error=True))
         else:
             background = (
                 f"echo $$ > {shlex.quote(prefix + '.pid')}; trap {shlex.quote('rm -f ' + prefix + '.pid')} EXIT HUP TERM; "
@@ -670,33 +760,34 @@ def launch_step(workspace: dict, step_id: str) -> None:
                 raise ApiError(500, result.stderr.strip() or "docker exec завершился с ошибкой")
     else:
         configured_workdir = host_workdir(workspace, spec)
-        workdir = configured_workdir if configured_workdir.is_dir() else Path.home()
+        workdir = configured_workdir
         source = str(target.get("source_command") or "").strip()
         prepared_command = f"{source} && ( {command} )" if source else command
         pid_file, shell_file, rc_file, log_file = (runtime_file(base, s) for s in (".pid", ".shell.pid", ".rc", ".log"))
         if terminal:
             cleanup = f"rm -f {shlex.quote(str(pid_file))} {shlex.quote(str(shell_file))}"
             inner = (
-                f"cd {shlex.quote(str(workdir))}; echo $$ > {shlex.quote(str(shell_file))}; "
+                f"cd {shlex.quote(str(workdir))} || exit 1; echo $$ > {shlex.quote(str(shell_file))}; "
                 f"trap {shlex.quote(cleanup)} EXIT; trap {shlex.quote(cleanup + '; exit 0')} HUP TERM; set -m; "
                 f"( {prepared_command} ) > >(tee {shlex.quote(str(log_file))}) 2>&1 & runner_pid=$!; "
                 f"echo $runner_pid > {shlex.quote(str(pid_file))}; fg %1; runner_rc=$?; "
                 f"rm -f {shlex.quote(str(pid_file))}; echo $runner_rc > {shlex.quote(str(rc_file))}; "
-                "printf '\n[Scenario Runner] Команда завершена, код %s. Терминал остаётся открытым.\n' \"$runner_rc\"; bash -i"
+                "printf '\n[Scenario Runner] Команда завершена, код %s. Терминал остаётся открытым.\n' \"$runner_rc\"; bash -i; exit $?"
             )
-            open_terminal(f"Scenario Runner · Ubuntu · {spec['title']}", inner)
+            remember_terminal(base, open_terminal(f"Scenario Runner · {spec['title']}", inner))
         else:
             wrapped = (
-                f"echo $$ > {shlex.quote(str(pid_file))}; trap {shlex.quote('rm -f ' + str(pid_file))} EXIT HUP TERM; "
+                f"echo $$ > {shlex.quote(str(pid_file))}; trap {shlex.quote('rm -f ' + shlex.quote(str(pid_file)))} EXIT; trap 'exit 143' HUP TERM; "
                 f"( {prepared_command} ); runner_rc=$?; trap - EXIT; rm -f {shlex.quote(str(pid_file))}; "
                 f"echo $runner_rc > {shlex.quote(str(rc_file))}; exit $runner_rc"
             )
             log = log_file.open("wb")
             try:
-                subprocess.Popen(["bash", "-lc", wrapped], cwd=workdir, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                process = subprocess.Popen(["bash", "-lc", wrapped], cwd=workdir, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                threading.Thread(target=process.wait, daemon=True).start()
             finally:
                 log.close()
-    workspace["steps"][step_id].update(status="starting", message="Команда запускается…")
+    workspace["steps"][step_id].update(status="starting", message="Команда запускается…", started_at=time.time())
 
 
 def descendants(root: int) -> list[int]:
@@ -708,9 +799,13 @@ def descendants(root: int) -> list[int]:
             children.setdefault(int(values[1]), []).append(int(values[0]))
     output: list[int] = []
     def collect(pid: int) -> None:
+        if pid in visited:
+            return
+        visited.add(pid)
         for child in children.get(pid, []):
             collect(child)
         output.append(pid)
+    visited: set[int] = set()
     collect(root)
     return output
 
@@ -723,6 +818,7 @@ def stop_step(workspace: dict, step_id: str) -> None:
     if state["external"]:
         raise ApiError(409, "Внешний процесс не принадлежит Scenario Runner и не будет остановлен")
     target = target_for(spec)
+    base = runtime_base(str(workspace["id"]), step_id)
     if target_is_docker(target):
         prefix = f"/tmp/scenario-runner-{safe_id(str(workspace['id']))}-{safe_id(step_id)}"
         if container_running(target):
@@ -732,7 +828,6 @@ def stop_step(workspace: dict, step_id: str) -> None:
             if container_terminal_pids(target, prefix):
                 raise ApiError(500, "Терминал сценария остался открыт; повторите остановку")
     else:
-        base = runtime_base(str(workspace["id"]), step_id)
         roots = [file_pid(runtime_file(base, ".pid")), file_pid(runtime_file(base, ".shell.pid"))]
         targets = []
         for pid in roots:
@@ -748,6 +843,7 @@ def stop_step(workspace: dict, step_id: str) -> None:
                 time.sleep(0.4)
         runtime_file(base, ".pid").unlink(missing_ok=True)
         runtime_file(base, ".shell.pid").unlink(missing_ok=True)
+    close_mac_terminal(base)
     workspace["steps"][step_id].update(status="stopped", message="Остановлено пользователем")
 
 
@@ -853,12 +949,19 @@ class Handler(BaseHTTPRequestHandler):
         return [urllib.parse.unquote(value) for value in urllib.parse.urlparse(self.path).path.split("/") if value]
 
     def check_origin(self) -> None:
+        try:
+            host = urllib.parse.urlparse("http://" + self.headers.get("Host", ""))
+            valid_host = host.hostname in ("127.0.0.1", "localhost", "::1") and (host.port or 80) == self.server.server_port
+        except ValueError:
+            valid_host = False
+        if not valid_host:
+            raise ApiError(403, "Некорректный Host: разрешён только локальный адрес сервера")
         origin = self.headers.get("Origin")
         if not origin:
             return
-        parsed = urllib.parse.urlparse(origin)
         try:
-            allowed = parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1") and parsed.port == self.server.server_port
+            parsed = urllib.parse.urlparse(origin)
+            allowed = parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost", "::1") and (parsed.port or 80) == self.server.server_port
         except ValueError:
             allowed = False
         if not allowed:
@@ -872,7 +975,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         try:
+            self.check_origin()
             parts = self.path_parts()
+            if parts == ["api", "health"]:
+                self.json_response({"app": "scenario-runner", "version": APP_VERSION,
+                                    "instance_id": getattr(self.server, "instance_id", ""),
+                                    "config": str(CONFIG_DIR.resolve())})
+                return
             if parts == ["api", "state"]:
                 self.json_response(state_payload())
                 return
@@ -909,6 +1018,13 @@ class Handler(BaseHTTPRequestHandler):
                     missing = sorted(required - available)
                     if missing:
                         raise ApiError(409, "Нельзя удалить используемые цели: " + ", ".join(missing))
+                    changed = {target["id"] for target in normalized["targets"] if target not in settings["targets"]}
+                    for workspace in workspaces:
+                        for spec in preset_for(workspace)["steps"]:
+                            if spec["target_id"] in changed:
+                                status = step_status(workspace, spec)
+                                if status["owned"] or status["terminal_open"] or status.get("status") == "starting":
+                                    raise ApiError(409, "Сначала завершите команды изменяемой цели")
                     atomic_json(SETTINGS_FILE, normalized)
                     settings.clear()
                     settings.update(normalized)
@@ -924,6 +1040,8 @@ class Handler(BaseHTTPRequestHandler):
                             ):
                                 raise ApiError(409, "Пресет сейчас выполняется. Сначала завершите его команды")
                     item = normalize_preset(body, preset_id)
+                    if not preset_id and item["id"] in presets:
+                        raise ApiError(409, "Пресет с таким идентификатором уже существует. Измените название или откройте существующий пресет.")
                     available = {target["id"] for target in settings["targets"]}
                     missing = sorted({step["target_id"] for step in item["steps"]} - available)
                     if missing:
@@ -1044,12 +1162,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Native scenario runner")
     parser.add_argument("--host", default=os.getenv("SCENARIO_RUNNER_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.getenv("SCENARIO_RUNNER_PORT", "8010")))
+    parser.add_argument("--instance-id", default="", help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.host not in ("127.0.0.1", "localhost", "::1"):
+        parser.error("Сервер выполняет команды без авторизации: используйте только loopback host")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     load_all()
     refresh_status_cache()
     threading.Thread(target=status_worker, name="status-worker", daemon=True).start()
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    class LocalServer(ThreadingHTTPServer):
+        address_family = socket.AF_INET6 if args.host == "::1" else socket.AF_INET
+
+    server = LocalServer((args.host, args.port), Handler)
+    server.instance_id = args.instance_id
     LOG.info("Scenario Runner %s: http://%s:%s", APP_VERSION, args.host, args.port)
     try:
         server.serve_forever()

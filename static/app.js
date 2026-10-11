@@ -1,6 +1,6 @@
 const $ = selector => document.querySelector(selector);
 const el = (tag, className = "", text = "") => { const node = document.createElement(tag); node.className = className; if (text !== "") node.textContent = text; return node; };
-let state = null, mutation = 0, pollBusy = false, draft = null, savedDraft = "", settingsDraft = null;
+let state = null, mutation = 0, pollBusy = false, draft = null, savedDraft = "", settingsDraft = null, connected = true;
 let variablesWorkspaceId = null, variablesDraft = [], toastTimer = null, lastInteractionAt = Date.now();
 
 const palettes = {
@@ -23,18 +23,25 @@ function applyAppearance() {
   bodyStyle.setProperty("--green", appearance.accent); bodyStyle.setProperty("--bg", appearance.background); bodyStyle.setProperty("--surface", appearance.surface); bodyStyle.setProperty("--text", appearance.text);
 }
 function toast(message, error = false) { const box = $("#toast"); box.textContent = message; box.className = `toast show${error ? " error" : ""}`; clearTimeout(toastTimer); toastTimer = setTimeout(() => box.className = "toast", 4200); }
-async function api(path, options = {}) { const response = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || `Ошибка HTTP ${response.status}`); return body; }
-function editingNow() { const active = document.activeElement; const overlay = $("#presetDrawer").classList.contains("open") || !$("#settingsModal").classList.contains("hidden") || !$("#variablesModal").classList.contains("hidden"); return overlay || Date.now() - lastInteractionAt < 1500 || Boolean(active?.matches("input, select, textarea, button")); }
+async function api(path, options = {}) {
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), options.method ? 60000 : 10000);
+  try { const response = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options, signal: controller.signal }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || `Ошибка HTTP ${response.status}`); return body; }
+  catch (error) { if (error.name === "AbortError") throw new Error("Сервер не ответил вовремя. Обновите статусы перед повторным запуском."); throw error; }
+  finally { clearTimeout(timeout); }
+}
+function editingNow() { const active = document.activeElement; const overlay = $("#presetDrawer").classList.contains("open") || !$("#settingsModal").classList.contains("hidden") || !$("#variablesModal").classList.contains("hidden"); return overlay || Date.now() - lastInteractionAt < 1500 || Boolean(active?.matches("input, select, textarea")); }
 async function refresh(silent = true) {
   if (pollBusy) return; pollBusy = true; const epoch = mutation;
-  try { const next = await api("/api/state"); if (epoch === mutation) { state = next; if (!silent || !editingNow()) render(); else renderHeader(); } }
-  catch (error) { if (!silent) toast(error.message, true); } finally { pollBusy = false; }
+  try { const next = await api("/api/state"); if (epoch === mutation) { state = next; connected = true; if (!silent || !editingNow()) render(); else renderHeader(); } }
+  catch (error) { connected = false; renderHeader(); if (!silent) toast(error.message, true); return false; } finally { pollBusy = false; }
+  return true;
 }
 async function mutate(path, method = "POST", body = {}) { mutation += 1; try { state = await api(path, { method, body: JSON.stringify(body) }); render(); return state; } catch (error) { toast(error.message, true); throw error; } }
 function targetById(id) { return state?.settings?.targets?.find(target => target.id === id) || state?.settings?.targets?.[0]; }
 function optionList(select, active = "") { select.replaceChildren(...state.presets.map(preset => { const option = el("option", "", preset.name); option.value = preset.id; option.selected = preset.id === active; return option; })); }
 function renderHeader() {
   if (!state) return; $("#version").textContent = `v${state.version}`; const node = $("#containerStatus"), targets = state.targets || [], ready = targets.filter(target => target.running).length;
+  if (!connected) { node.textContent = "Нет связи с сервером"; node.className = "container-status"; node.title = "Запустите ./start; подключение восстановится автоматически"; return; }
   node.textContent = `${ready}/${targets.length} целей доступны`; node.className = `container-status${ready === targets.length ? " running" : ""}`; node.title = targets.map(target => `${target.running ? "●" : "○"} ${target.name}`).join("\n");
 }
 function render() { if (!state) return; renderHeader(); optionList($("#newPreset"), $("#newPreset").value || state.presets[0]?.id); $("#createButton").disabled = state.presets.length === 0; $("#createButton").title = state.presets.length ? "" : "Сначала создайте сценарий в редакторе"; $("#workspaceList").replaceChildren(...state.workspaces.map(renderWorkspace)); $("#emptyState").classList.toggle("hidden", state.workspaces.length > 0); }
@@ -54,10 +61,10 @@ function renderStep(workspace, spec, status) {
   check.onchange = () => mutate(`/api/workspaces/${encodeURIComponent(workspace.id)}/steps/${encodeURIComponent(spec.id)}/select`, "POST", { selected: check.checked }); title.append(check, el("span", "", spec.title)); card.append(title);
   const target = targetById(spec.target_id), mode = `${target?.name || spec.target_id} · ${spec.terminal ? "терминал" : "фон"}`; card.append(el("div", `mode${target?.type === "local" ? " host" : ""}`, mode)); card.append(el("div", "status-text", status.message || "Готово к запуску"));
   const details = el("details"); details.append(el("summary", "", "Показать команду"), el("code", "", spec.command)); card.append(details); if (status.log_tail) card.append(el("div", "log", status.log_tail));
-  let label = "Запустить", endpoint = "run", disabled = false; if (status.external) { label = "Внешний процесс"; disabled = true; } else if (status.owned || status.terminal_open) { label = status.terminal_open && !status.owned ? "× Закрыть терминал" : "■ Остановить"; endpoint = "stop"; } else if (status.status === "failed") label = "↻ Повторить";
+  let label = "Запустить", endpoint = "run", disabled = false; if (status.status === "starting") { label = "Запускается…"; disabled = true; } else if (status.external) { label = "Внешний процесс"; disabled = true; } else if (status.owned || status.terminal_open) { label = status.terminal_open && !status.owned ? "× Закрыть терминал" : "■ Остановить"; endpoint = "stop"; } else if (status.status === "failed") label = "↻ Повторить";
   const button = el("button", `button ${endpoint === "stop" ? "danger" : "secondary"}`, label); button.disabled = disabled; button.title = status.external ? "Процесс найден по шаблону. Scenario Runner его не запускал и не остановит." : ""; button.onclick = () => actionButton(button, () => mutate(`/api/workspaces/${encodeURIComponent(workspace.id)}/steps/${encodeURIComponent(spec.id)}/${endpoint}`)); card.append(button); return card;
 }
-async function actionButton(button, action) { const old = button.textContent; button.disabled = true; button.textContent = "Выполняется…"; try { await action(); } finally { if (document.body.contains(button)) { button.disabled = false; button.textContent = old; } } }
+async function actionButton(button, action) { const old = button.textContent; button.disabled = true; button.textContent = "Выполняется…"; try { await action(); } catch { /* mutate already shows the error */ } finally { if (document.body.contains(button)) { button.disabled = false; button.textContent = old; } } }
 
 function newDraft() { return { id: "", name: "Новый сценарий", description: "", workdir: "", steps: [{ id: "command-1", title: "Новая команда", command: "", target_id: "local", terminal: true, selected: true, process_match: "" }] }; }
 function choosePreset(preset) { draft = structuredClone(preset); savedDraft = JSON.stringify(draft); fillPreset(); }
@@ -98,12 +105,12 @@ function renderVariables() { $("#variablesEditor").replaceChildren(...variablesD
 document.addEventListener("pointerdown", () => { lastInteractionAt = Date.now(); }, true); document.addEventListener("input", () => { lastInteractionAt = Date.now(); }, true); applyAppearance();
 $("#createButton").onclick = () => { $("#createPanel").classList.remove("hidden"); $("#newName").focus(); }; $("#cancelCreate").onclick = () => $("#createPanel").classList.add("hidden");
 $("#confirmCreate").onclick = async () => { const name = $("#newName").value.trim(); if (!name) return toast("Введите название панели", true); await mutate("/api/workspaces", "POST", { name, bag_path: $("#newBag").value.trim(), preset_id: $("#newPreset").value }); $("#newName").value = ""; $("#newBag").value = ""; $("#createPanel").classList.add("hidden"); };
-$("#refreshButton").onclick = () => refresh(false).then(() => { render(); toast("Статусы и сценарии обновлены"); }); $("#presetsButton").onclick = openDrawer; $("#drawerBackdrop").onclick = closeDrawer; document.querySelectorAll(".close-drawer").forEach(node => node.onclick = closeDrawer); [$("#presetName"), $("#presetDescription"), $("#presetProject")].forEach(node => node.oninput = syncDraftFields);
+$("#refreshButton").onclick = () => refresh(false).then(ok => { if (ok) { render(); toast("Статусы и сценарии обновлены"); } }); $("#presetsButton").onclick = openDrawer; $("#drawerBackdrop").onclick = closeDrawer; document.querySelectorAll(".close-drawer").forEach(node => node.onclick = closeDrawer); [$("#presetName"), $("#presetDescription"), $("#presetProject")].forEach(node => node.oninput = syncDraftFields);
 $("#addStep").onclick = () => { const number = draft.steps.length + 1; draft.steps.push({ id: `command-${number}`, title: `Команда ${number}`, command: "", target_id: "local", terminal: true, selected: true, process_match: "" }); renderStepEditor(); feedback(); };
 $("#savePreset").onclick = async () => { syncDraftFields(); try { const next = await mutate("/api/presets", "POST", draft); const saved = next.presets.find(item => item.id === draft.id) || next.presets.find(item => item.name === draft.name && !item.builtin); if (saved) { draft = structuredClone(saved); savedDraft = JSON.stringify(draft); fillPreset(); } feedback("✓ Пресет сохранён", "ok"); } catch (error) { feedback(error.message, "error"); } };
 $("#deletePreset").onclick = async () => { if (!draft.id) return; await mutate(`/api/presets/${encodeURIComponent(draft.id)}`, "DELETE"); draft = newDraft(); savedDraft = ""; fillPreset(); };
 $("#exportPreset").onclick = () => { syncDraftFields(); const blob = new Blob([JSON.stringify(draft, null, 2)], { type: "application/json" }), url = URL.createObjectURL(blob), anchor = el("a"); anchor.href = url; anchor.download = `${draft.id || "scenario"}.json`; anchor.click(); URL.revokeObjectURL(url); };
-$("#importPreset").onchange = async event => { const file = event.target.files[0]; if (!file) return; try { draft = JSON.parse(await file.text()); draft.id ||= ""; draft.builtin = false; savedDraft = ""; fillPreset(); } catch { toast("Не удалось прочитать JSON", true); } event.target.value = ""; };
+$("#importPreset").onchange = async event => { const file = event.target.files[0]; if (!file) return; try { const imported = JSON.parse(await file.text()); if (!imported || typeof imported !== "object" || !Array.isArray(imported.steps) || !imported.steps.length || imported.steps.some(step => !step || typeof step !== "object" || typeof step.command !== "string")) throw new Error("Invalid preset"); draft = imported; draft.id ||= ""; draft.builtin = false; savedDraft = ""; fillPreset(); } catch { toast("Не удалось прочитать JSON", true); } event.target.value = ""; };
 $("#settingsButton").onclick = openSettings; document.querySelectorAll(".close-settings").forEach(node => node.onclick = () => $("#settingsModal").classList.add("hidden"));
 $("#addTarget").onclick = () => { settingsDraft.targets.push({ id: `target-${settingsDraft.targets.length + 1}`, name: "Новая цель", type: "local", workdir: "~", source_command: "" }); renderTargets(); };
 $("#saveSettings").onclick = async () => { await mutate("/api/settings", "POST", { targets: settingsDraft.targets }); localStorage.setItem("scenario-runner-appearance-v1", JSON.stringify(appearance)); $("#settingsModal").classList.add("hidden"); toast("Настройки сохранены"); };

@@ -70,6 +70,34 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(server.STATE_REVISION, 0)
         self.assertEqual(server.WORKSPACE_REVISIONS, {})
 
+    def test_foreign_host_is_rejected_for_reads_and_writes(self):
+        for method in ("GET", "POST"):
+            status, _ = self.request("/api/state" if method == "GET" else "/api/settings", {}, method=method,
+                                     headers={"Content-Type": "application/json", "Host": f"evil.example:{self.http.server_port}"})
+            self.assertEqual(status, 403)
+
+    def test_foreign_origin_cannot_mutate_configuration(self):
+        status, _ = self.request("/api/workspaces/panel-test/update", {"name": "Changed"},
+                                 headers={"Content-Type": "application/json", "Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        self.assert_workspace_unchanged()
+
+    def test_new_preset_cannot_overwrite_existing_slug(self):
+        before = copy.deepcopy(server.presets)
+        status, _ = self.request("/api/presets", {"name": "test", "steps": [{"command": "echo new"}]})
+        self.assertEqual(status, 409)
+        self.assertEqual(server.presets, before)
+
+    def test_active_target_cannot_change_under_running_command(self):
+        targets = copy.deepcopy(server.settings["targets"])
+        targets[0]["workdir"] = "/other"
+        before = copy.deepcopy(server.settings)
+        with patch.object(server, "step_status", return_value={"owned": True, "terminal_open": False}):
+            status, _ = self.request("/api/settings", {"targets": targets})
+        self.assertEqual(status, 409)
+        self.assertEqual(server.settings, before)
+
+
     def test_invalid_preset_does_not_partially_rename_workspace(self):
         status, _ = self.request("/api/workspaces/panel-test/update", {"name": "Changed", "preset_id": "missing"})
         self.assertEqual(status, 404)
