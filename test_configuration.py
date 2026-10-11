@@ -124,6 +124,7 @@ class ConfigurationTests(unittest.TestCase):
             status, body = self.request("/api/workspaces/panel-test/stop", {})
         self.assertEqual(status, 503)
         self.assertIn("close failed", body["error"])
+        self.assertEqual(body["failures"], [{"title": "Команда 2", "message": "close failed"}])
         self.assertEqual(stop.call_count, 2)
 
     def test_started_steps_are_saved_after_later_launch_failure(self):

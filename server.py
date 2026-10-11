@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.7.0"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path(os.getenv("SCENARIO_RUNNER_CONFIG_DIR", "~/.config/scenario-runner")).expanduser()
@@ -101,9 +101,10 @@ workspaces: list[dict] = []
 
 
 class ApiError(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, *, failures: list[dict] | None = None):
         super().__init__(message)
         self.status = status
+        self.failures = failures
 
 
 def now_iso() -> str:
@@ -1005,10 +1006,11 @@ def stop_workspace(workspace: dict) -> None:
             try:
                 stop_step(workspace, spec["id"])
             except ApiError as exc:
-                errors.append(f"{spec['title']}: {exc}")
+                errors.append({"title": spec["title"], "message": str(exc)})
     save_workspaces(workspace)
     if errors:
-        raise ApiError(503, "Не все команды остановлены. " + "; ".join(errors))
+        details = "; ".join(f"{item['title']}: {item['message']}" for item in errors)
+        raise ApiError(503, "Не все команды остановлены. " + details, failures=errors)
 
 
 def status_worker() -> None:
@@ -1078,7 +1080,7 @@ class LocalServer(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ScenarioRunner/0.1"
+    server_version = f"ScenarioRunner/{APP_VERSION}"
 
     def log_message(self, fmt: str, *args: Any) -> None:
         LOG.info("%s - %s", self.address_string(), fmt % args)
@@ -1281,7 +1283,10 @@ class Handler(BaseHTTPRequestHandler):
                     raise ApiError(404, "Метод API не найден")
             self.json_response(state_payload())
         except ApiError as exc:
-            self.json_response({"error": str(exc)}, exc.status)
+            payload = {"error": str(exc)}
+            if exc.failures is not None:
+                payload["failures"] = exc.failures
+            self.json_response(payload, exc.status)
         except Exception as exc:
             LOG.error("Необработанная ошибка: %s\n%s", exc, traceback.format_exc())
             self.json_response({"error": f"Внутренняя ошибка: {exc}"}, 500)

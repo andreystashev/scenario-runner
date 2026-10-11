@@ -1,3 +1,4 @@
+import { t, serverText } from "./i18n.js";
 /** JSON transport. A timeout never implies that a command was not started. */
 export function workspacePath(id, suffix = "") {
   return `/api/workspaces/${encodeURIComponent(id)}${suffix}`;
@@ -16,17 +17,30 @@ export async function request(path, options = {}) {
       signal: controller.signal,
     });
     const body = await response.json();
-    if (!response.ok)
-      throw new Error(body.error || `Ошибка HTTP ${response.status}`);
+    if (!response.ok) {
+      const error = Array.isArray(body.failures)
+        ? t("Some commands could not be stopped.") +
+          " " +
+          body.failures
+            .map(
+              (failure) => `${failure.title}: ${serverText(failure.message)}`,
+            )
+            .join("; ")
+        : serverText(body.error) ||
+          t("HTTP error {status}", { status: response.status });
+      throw new Error(error);
+    }
     return body;
   } catch (error) {
     if (error.name === "AbortError")
       throw new Error(
-        "Сервер не ответил вовремя. Обновите статусы перед повторным запуском.",
+        t("The server timed out. Refresh status before running again."),
       );
     if (error instanceof TypeError)
       throw new Error(
-        "Нет связи с сервером. Проверьте, что Scenario Runner запущен.",
+        t(
+          "Cannot connect to the server. Check that Scenario Runner is running.",
+        ),
       );
     throw error;
   } finally {

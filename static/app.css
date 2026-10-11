@@ -175,6 +175,13 @@ code {
 .container-status.running {
   color: var(--green);
 }
+.language-select {
+  width: 72px;
+  min-height: 39px;
+  padding: 8px 24px 8px 10px;
+  flex-shrink: 0;
+  font-size: 13px;
+}
 main {
   width: min(1120px, calc(100% - 48px));
   margin: 0 auto;
@@ -242,6 +249,10 @@ h1 {
 .field label span {
   opacity: 0.65;
   margin-left: 5px;
+}
+.field label > [data-i18n]:first-child {
+  opacity: 1;
+  margin-left: 0;
 }
 input,
 select,

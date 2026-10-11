@@ -13,14 +13,38 @@
         ><strong>RUNNER</strong><small id="version"></small
       ></a>
       <div class="top-actions">
-        <span id="containerStatus" class="container-status" role="status"
+        <span
+          id="containerStatus"
+          class="container-status"
+          role="status"
+          data-i18n="Connecting…"
           >Подключение…</span
         >
-        <button class="button secondary" id="refreshButton">↻ Обновить</button>
-        <button class="button primary" id="presetsButton">
-          Редактор сценариев
+        <button
+          class="button secondary"
+          id="refreshButton"
+          data-i18n="↻ Refresh"
+        >
+          ↻ Обновить
         </button>
-        <button class="icon-button" id="settingsButton" title="Настройки">
+        <button class="button primary" id="presetsButton" data-i18n="Scenarios">
+          Сценарии
+        </button>
+        <select
+          id="languageSelect"
+          class="language-select"
+          aria-label="Язык"
+          data-i18n-aria-label="Language"
+        >
+          <option value="ru">RU</option>
+          <option value="en">EN</option>
+        </select>
+        <button
+          class="icon-button"
+          id="settingsButton"
+          title="Настройки"
+          data-i18n-title="Settings"
+        >
           ⚙
         </button>
       </div>
@@ -29,25 +53,41 @@
     <main>
       <section class="intro">
         <div>
-          <p class="eyebrow">Локальное рабочее пространство</p>
-          <h1>Команды под рукой</h1>
-          <p>Повторяемые задачи для вашего компьютера и Docker-контейнеров.</p>
+          <h1 data-i18n="Panels">Панели</h1>
         </div>
-        <button class="button create" id="createButton">＋ Панель</button>
+        <button
+          class="button create"
+          id="createButton"
+          data-i18n="＋ Add panel"
+        >
+          ＋ Добавить панель
+        </button>
       </section>
 
       <div id="connectionBanner" class="connection-banner hidden" role="alert">
-        <span>Нет связи с сервером. Статусы могут быть устаревшими.</span
-        ><button id="retryConnection" class="text-button">Повторить</button>
+        <span data-i18n="Server disconnected. Status may be out of date."
+          >Нет связи с сервером. Статусы могут быть устаревшими.</span
+        ><button id="retryConnection" class="text-button" data-i18n="Retry">
+          Повторить
+        </button>
       </div>
-      <section class="overview" aria-label="Обзор">
+      <section
+        class="overview"
+        aria-label="Обзор"
+        data-i18n-aria-label="Overview"
+      >
         <div>
-          <strong id="panelCount">—</strong><span>рабочих панелей</span>
+          <strong id="panelCount">—</strong
+          ><span data-i18n="Panels">Панели</span>
         </div>
         <div>
-          <strong id="activeCount">—</strong><span>активных команд</span>
+          <strong id="activeCount">—</strong
+          ><span data-i18n="Running commands">Выполняются</span>
         </div>
-        <div><strong id="failedCount">—</strong><span>с ошибкой</span></div>
+        <div>
+          <strong id="failedCount">—</strong
+          ><span data-i18n="Errors">Ошибки</span>
+        </div>
       </section>
       <div class="list-toolbar">
         <label class="search-field"
@@ -55,55 +95,98 @@
           ><input
             type="search"
             id="searchPanels"
-            placeholder="Найти панель, сценарий или команду"
+            placeholder="Поиск панелей, сценариев и команд"
+            data-i18n-placeholder="Search panels, scenarios or commands"
             aria-label="Поиск панелей"
+            data-i18n-aria-label="Search panels"
         /></label>
-        <div class="filter-tabs" aria-label="Фильтр панелей">
-          <button data-filter="all" class="active" aria-pressed="true">
+        <div
+          class="filter-tabs"
+          aria-label="Фильтр панелей"
+          data-i18n-aria-label="Filter panels"
+        >
+          <button
+            data-filter="all"
+            class="active"
+            aria-pressed="true"
+            data-i18n="All"
+          >
             Все</button
-          ><button data-filter="active" aria-pressed="false">Активные</button
-          ><button data-filter="failed" aria-pressed="false">С ошибками</button>
+          ><button data-filter="active" aria-pressed="false" data-i18n="Active">
+            Активные</button
+          ><button
+            data-filter="failed"
+            aria-pressed="false"
+            data-i18n="With errors"
+          >
+            С ошибками
+          </button>
         </div>
         <span id="filterCount" class="result-count"></span>
       </div>
       <section id="createPanel" class="create-panel hidden">
         <div class="field">
-          <label>Название панели</label
-          ><input id="newName" placeholder="Например, разбор светофора" />
+          <label data-i18n="Panel name">Название панели</label
+          ><input
+            id="newName"
+            placeholder="Например: Разработка"
+            data-i18n-placeholder="e.g. Development"
+          />
         </div>
         <div class="field">
-          <label>Основной путь <span>необязательно</span></label
-          ><input id="newBag" placeholder="Папка проекта, данных или бэга" />
+          <label
+            ><span data-i18n="Data path">Путь данных</span
+            ><span data-i18n="optional">необязательно</span></label
+          ><input
+            id="newBag"
+            placeholder="Папка проекта или данных"
+            data-i18n-placeholder="Project or data directory"
+          />
         </div>
         <div class="field">
-          <label>Пресет</label
+          <label data-i18n="Scenario">Сценарий</label
           ><select id="newPreset"></select>
         </div>
         <div class="create-actions">
-          <button class="button secondary" id="cancelCreate">Отмена</button
-          ><button class="button primary" id="confirmCreate">Создать</button>
+          <button class="button secondary" id="cancelCreate" data-i18n="Cancel">
+            Отмена</button
+          ><button class="button primary" id="confirmCreate" data-i18n="Create">
+            Создать
+          </button>
         </div>
       </section>
 
       <section id="workspaceList" class="workspace-list"></section>
       <section id="emptyState" class="empty-state hidden">
         <div class="empty-icon">⌘</div>
-        <h2 id="emptyTitle">Загрузка панелей…</h2>
+        <h2 id="emptyTitle" data-i18n="Loading panels…">Загрузка панелей…</h2>
         <p id="emptyHint"></p>
-        <button id="emptyAction" class="button primary">
-          Создать первый сценарий
+        <button
+          id="emptyAction"
+          class="button primary"
+          data-i18n="Create scenario"
+        >
+          Создать сценарий
         </button>
       </section>
       <section id="filterEmpty" class="empty-state hidden">
-        <h2>Ничего не найдено</h2>
-        <p>Попробуйте другой запрос или покажите все панели.</p>
-        <button class="button secondary" id="clearFilters">
+        <h2 data-i18n="No matching panels">Панели не найдены</h2>
+        <p data-i18n="Change your search or show all panels.">
+          Измените запрос или покажите все панели.
+        </p>
+        <button
+          class="button secondary"
+          id="clearFilters"
+          data-i18n="Clear filters"
+        >
           Сбросить фильтры
         </button>
       </section>
-      <p class="page-hint">
-        Команды выполняются на вашем компьютере. Закрытие браузера их не
-        останавливает.
+      <p
+        class="page-hint"
+        data-i18n="Closing the browser does not stop running commands."
+      >
+        Закрытие браузера не останавливает команды.
       </p>
     </main>
 
@@ -119,54 +202,88 @@
     >
       <div class="drawer-head">
         <div>
-          <p class="eyebrow">Конструктор</p>
-          <h2 id="editorTitle">Редактор сценариев</h2>
+          <h2 id="editorTitle" data-i18n="Scenario editor">
+            Редактор сценариев
+          </h2>
         </div>
-        <button class="icon-button close-drawer" aria-label="Закрыть редактор">
+        <button
+          class="icon-button close-drawer"
+          aria-label="Закрыть редактор"
+          data-i18n-aria-label="Close editor"
+        >
           ×
         </button>
       </div>
       <div class="preset-tabs" id="presetTabs"></div>
       <div class="form-grid two">
         <div class="field">
-          <label>Название</label><input id="presetName" />
+          <label data-i18n="Name">Название</label><input id="presetName" />
         </div>
         <div class="field">
-          <label>Описание</label><input id="presetDescription" />
+          <label data-i18n="Description">Описание</label
+          ><input id="presetDescription" />
         </div>
       </div>
       <div class="field">
         <label
-          >Рабочая папка этого пресета
-          <span>пусто — папка выбранной цели</span></label
-        ><input id="presetProject" placeholder="Например: ~/projects/my-tool" />
+          ><span data-i18n="Working directory">Рабочая папка</span>
+          <span data-i18n="leave empty to use the environment’s directory"
+            >пусто — папка среды запуска</span
+          ></label
+        ><input
+          id="presetProject"
+          placeholder="Например: ~/projects/my-tool"
+          data-i18n-placeholder="e.g. ~/projects/my-tool"
+        />
       </div>
       <div class="section-title">
         <div>
-          <h3>Команды</h3>
-          <p>
-            Запускаются по порядку, без ожидания завершения. Переменные
-            <code>{{project_path}}</code>, <code>{{bag_path}}</code>,
-            <code>{{bag_folder}}</code>.
+          <h3 data-i18n="Commands">Команды</h3>
+          <p
+            data-i18n="Commands start in order without waiting for completion."
+          >
+            Команды запускаются по порядку, без ожидания завершения.
           </p>
         </div>
-        <button class="button secondary small" id="addStep">＋ Команда</button>
+        <button
+          class="button secondary small"
+          id="addStep"
+          data-i18n="＋ Add command"
+        >
+          ＋ Добавить команду
+        </button>
       </div>
       <div id="stepEditor" class="step-editor"></div>
       <div id="presetFeedback" class="feedback"></div>
       <div class="drawer-footer">
-        <button class="button primary" id="savePreset">Сохранить</button>
-        <button class="button secondary" id="duplicatePreset">
-          ⧉ Создать копию
+        <button class="button primary" id="savePreset" data-i18n="Save">
+          Сохранить
         </button>
-        <button class="button secondary" id="exportPreset">Экспорт JSON</button>
+        <button
+          class="button secondary"
+          id="duplicatePreset"
+          data-i18n="⧉ Duplicate scenario"
+        >
+          ⧉ Дублировать сценарий
+        </button>
+        <button
+          class="button secondary"
+          id="exportPreset"
+          data-i18n="Export JSON"
+        >
+          Экспорт JSON
+        </button>
         <label class="button secondary file-button"
-          >Импорт JSON<input
-            type="file"
-            id="importPreset"
-            accept="application/json,.json"
+          ><span data-i18n="Import JSON">Импорт JSON</span
+          ><input type="file" id="importPreset" accept="application/json,.json"
         /></label>
-        <button class="button danger ghost" id="deletePreset">Удалить</button>
+        <button
+          class="button danger ghost"
+          id="deletePreset"
+          data-i18n="Delete"
+        >
+          Удалить
+        </button>
       </div>
     </aside>
 
@@ -182,56 +299,65 @@
       <div class="modal settings-modal">
         <div class="drawer-head">
           <div>
-            <p class="eyebrow">Персонализация и окружения</p>
-            <h2 id="settingsTitle">Настройки</h2>
+            <h2 id="settingsTitle" data-i18n="Settings">Настройки</h2>
           </div>
           <button
             class="icon-button close-settings"
             aria-label="Закрыть настройки"
+            data-i18n-aria-label="Close settings"
           >
             ×
           </button>
         </div>
         <div class="settings-section">
-          <h3>Внешний вид</h3>
+          <h3 data-i18n="Appearance">Внешний вид</h3>
           <div class="appearance-grid">
             <div class="field">
-              <label>Тема</label>
+              <label data-i18n="Theme">Тема</label>
               <div class="segmented">
-                <button data-theme-choice="dark">Тёмная</button
-                ><button data-theme-choice="light">Светлая</button>
+                <button data-theme-choice="dark" data-i18n="Dark">Тёмная</button
+                ><button data-theme-choice="light" data-i18n="Light">
+                  Светлая
+                </button>
               </div>
             </div>
             <div class="field">
-              <label>Акцент</label><input type="color" id="appearanceAccent" />
+              <label data-i18n="Accent color">Цвет акцента</label
+              ><input type="color" id="appearanceAccent" />
             </div>
             <div class="field">
-              <label>Фон</label><input type="color" id="appearanceBackground" />
+              <label data-i18n="Background color">Цвет фона</label
+              ><input type="color" id="appearanceBackground" />
             </div>
             <div class="field">
-              <label>Панели</label><input type="color" id="appearanceSurface" />
+              <label data-i18n="Panel color">Цвет панелей</label
+              ><input type="color" id="appearanceSurface" />
             </div>
             <div class="field">
-              <label>Текст</label><input type="color" id="appearanceText" />
+              <label data-i18n="Text color">Цвет текста</label
+              ><input type="color" id="appearanceText" />
             </div>
             <div class="field">
-              <label>Шрифт</label
+              <label data-i18n="Font">Шрифт</label
               ><select id="appearanceFont">
-                <option value="system">Системный</option>
-                <option value="mono">Моноширинный</option>
-                <option value="serif">С засечками</option>
-                <option value="custom">Свой</option>
+                <option value="system" data-i18n="System">Системный</option>
+                <option value="mono" data-i18n="Monospace">Моноширинный</option>
+                <option value="serif" data-i18n="Serif">С засечками</option>
+                <option value="custom" data-i18n="Custom">Другой</option>
               </select>
             </div>
             <div class="field">
-              <label>Название своего шрифта</label
+              <label data-i18n="Custom font name">Название шрифта</label
               ><input
                 id="appearanceCustomFont"
                 placeholder="Например: Ubuntu Sans"
+                data-i18n-placeholder="e.g. Ubuntu Sans"
               />
             </div>
             <div class="field range-field">
-              <label>Масштаб шрифта <strong id="fontScaleValue"></strong></label
+              <label
+                ><span data-i18n="Font size">Размер текста</span
+                ><strong id="fontScaleValue"></strong></label
               ><input
                 type="range"
                 id="appearanceFontScale"
@@ -241,15 +367,22 @@
               />
             </div>
             <div class="field">
-              <label>Плотность</label>
+              <label data-i18n="Density">Плотность</label>
               <div class="segmented">
-                <button data-density-choice="compact">Компактно</button
-                ><button data-density-choice="comfortable">Свободно</button>
+                <button data-density-choice="compact" data-i18n="Compact">
+                  Компактно</button
+                ><button
+                  data-density-choice="comfortable"
+                  data-i18n="Comfortable"
+                >
+                  Обычная
+                </button>
               </div>
             </div>
             <div class="field range-field">
               <label
-                >Прозрачность панелей <strong id="opacityValue"></strong></label
+                ><span data-i18n="Panel opacity">Непрозрачность панелей</span
+                ><strong id="opacityValue"></strong></label
               ><input
                 type="range"
                 id="appearanceOpacity"
@@ -259,29 +392,40 @@
               />
             </div>
             <label class="check-row"
-              ><input type="checkbox" id="appearanceGlass" /> Размытие фона
-              панелей</label
+              ><input type="checkbox" id="appearanceGlass" />
+              <span data-i18n="Blur behind panels"
+                >Размытие под панелями</span
+              ></label
             >
           </div>
         </div>
         <div class="settings-section">
           <div class="section-title">
             <div>
-              <h3>Цели выполнения</h3>
-              <p>
-                Подготовка цели выполняется перед каждой командой. Для обычных
-                задач оставьте её пустой.
+              <h3 data-i18n="Run environments">Среды запуска</h3>
+              <p
+                data-i18n="The setup command runs before each command. Leave it empty if no setup is needed."
+              >
+                Команда подготовки выполняется перед каждой командой сценария.
+                Если подготовка не нужна, оставьте поле пустым.
               </p>
             </div>
-            <button class="button secondary small" id="addTarget">
-              ＋ Цель
+            <button
+              class="button secondary small"
+              id="addTarget"
+              data-i18n="＋ Add environment"
+            >
+              ＋ Добавить среду
             </button>
           </div>
           <div id="targetEditor" class="target-editor"></div>
         </div>
         <div class="modal-actions">
-          <button class="button secondary close-settings">Отмена</button
-          ><button class="button primary" id="saveSettings">Сохранить</button>
+          <button class="button secondary close-settings" data-i18n="Cancel">
+            Отмена</button
+          ><button class="button primary" id="saveSettings" data-i18n="Save">
+            Сохранить
+          </button>
         </div>
       </div>
     </div>
@@ -298,42 +442,57 @@
       <div class="modal">
         <div class="drawer-head">
           <div>
-            <p class="eyebrow">Контекст панели</p>
-            <h2 id="parametersTitle">Параметры панели</h2>
+            <h2 id="parametersTitle" data-i18n="Panel parameters">
+              Параметры панели
+            </h2>
           </div>
           <button
             class="icon-button close-variables"
             aria-label="Закрыть параметры"
+            data-i18n-aria-label="Close parameters"
           >
             ×
           </button>
         </div>
         <div class="form-grid two">
           <div class="field">
-            <label>Название панели</label
+            <label data-i18n="Panel name">Название панели</label
             ><input id="workspaceName" maxlength="160" />
           </div>
           <div class="field">
-            <label>Сценарий</label
+            <label data-i18n="Scenario">Сценарий</label
             ><select id="workspacePreset"></select>
           </div>
         </div>
-        <p class="hint">
-          Используйте значения в командах как <code>{{имя}}</code>. Пишите
-          переменные без дополнительных кавычек: значения экранируются
-          автоматически. Основной путь доступен как <code>{{bag_path}}</code>.
+        <p
+          class="hint"
+          data-i18n="Use {{name}} in commands without extra quotes. Values are shell-escaped. The data path is available as {{bag_path}}."
+        >
+          Вставляйте {{name}} в команды без дополнительных кавычек. Значения
+          экранируются автоматически. Путь данных доступен как {{bag_path}}.
         </p>
         <div class="field">
-          <label>Основной путь</label
-          ><input id="workspaceBagPath" placeholder="Необязательно" />
+          <label data-i18n="Data path">Путь данных</label
+          ><input
+            id="workspaceBagPath"
+            placeholder="Необязательно"
+            data-i18n-placeholder="Optional"
+          />
         </div>
         <div id="variablesEditor" class="variables-editor"></div>
-        <button class="button secondary small" id="addVariable">
-          ＋ Переменная
+        <button
+          class="button secondary small"
+          id="addVariable"
+          data-i18n="＋ Add variable"
+        >
+          ＋ Добавить переменную
         </button>
         <div class="modal-actions">
-          <button class="button secondary close-variables">Отмена</button
-          ><button class="button primary" id="saveVariables">Сохранить</button>
+          <button class="button secondary close-variables" data-i18n="Cancel">
+            Отмена</button
+          ><button class="button primary" id="saveVariables" data-i18n="Save">
+            Сохранить
+          </button>
         </div>
       </div>
     </div>

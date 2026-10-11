@@ -1,3 +1,10 @@
+import {
+  t,
+  getLanguage,
+  setLanguage,
+  translateDocument,
+  serverText,
+} from "./i18n.js";
 import { request as api, workspacePath } from "./api.js";
 import {
   copyName,
@@ -143,13 +150,15 @@ async function withBusy(control, action) {
   try {
     await action();
   } catch (error) {
-    toast(error.message, true);
+    toast(serverText(error.message), true);
   } finally {
     if (control.isConnected) {
       control.disabled = false;
       control.removeAttribute("aria-busy");
       delete control.dataset.busy;
-      control.textContent = text;
+      control.textContent = control.dataset.i18n
+        ? t(control.dataset.i18n)
+        : text;
       if (control.id === "savePreset") feedback();
     }
   }
@@ -187,7 +196,7 @@ async function refresh(silent = true) {
     connected = false;
     if (!editingNow()) render();
     else renderHeader();
-    if (!silent) toast(error.message, true);
+    if (!silent) toast(serverText(error.message), true);
     return false;
   } finally {
     pollBusy = false;
@@ -227,15 +236,18 @@ function renderHeader() {
   const node = $("#containerStatus");
   $("#connectionBanner").classList.toggle("hidden", connected);
   if (!state) {
-    node.textContent = connected ? "Подключение…" : "Нет связи";
+    node.textContent = connected ? t("Connecting…") : t("Offline");
     return;
   }
   $("#version").textContent = `v${state.version}`;
   const targets = state.targets || [],
     ready = targets.filter((target) => target.running).length;
   node.textContent = connected
-    ? `${ready}/${targets.length} целей доступны`
-    : "Нет связи с сервером";
+    ? t("{ready}/{total} environments available", {
+        ready: ready,
+        total: targets.length,
+      })
+    : t("Server disconnected");
   node.className = `container-status${connected && ready === targets.length ? " running" : ""}`;
   node.title = targets
     .map((target) => `${target.running ? "●" : "○"} ${target.name}`)
@@ -275,6 +287,7 @@ function render() {
       workspace,
       state.settings.targets,
       connected,
+      getLanguage(),
     ]);
     if (previous?.dataset.signature === signature) {
       if (list.children[index] !== previous)
@@ -293,17 +306,21 @@ function render() {
     "hidden",
     !state.workspaces.length || visible.length > 0,
   );
-  $("#filterCount").textContent =
-    `${visible.length} из ${state.workspaces.length}`;
+  $("#filterCount").textContent = t("{shown} of {total}", {
+    shown: visible.length,
+    total: state.workspaces.length,
+  });
   $("#emptyTitle").textContent = state.presets.length
-    ? "Сценарии готовы. Добавьте рабочую панель."
-    : "Сохраните команды, которые запускаете снова и снова";
+    ? t("No panels yet")
+    : t("No scenarios yet");
   $("#emptyHint").textContent = state.presets.length
-    ? "Один сценарий можно использовать в нескольких панелях с разными параметрами."
-    : "Создайте сценарий, добавьте команды и запустите их из своей панели.";
+    ? t(
+        "Add a panel and choose a scenario. Each panel has its own path and variables.",
+      )
+    : t("Create a scenario with commands, then add a panel to run it.");
   $("#emptyAction").textContent = state.presets.length
-    ? "＋ Добавить панель"
-    : "＋ Создать первый сценарий";
+    ? t("＋ Add panel")
+    : t("＋ Create scenario");
   document.querySelectorAll("[data-filter]").forEach((control) => {
     const selected = control.dataset.filter === statusFilter;
     control.classList.toggle("active", selected);
@@ -334,10 +351,10 @@ function renderWorkspace(workspace) {
   if (workspace.bag_path) meta.append(el("code", "", workspace.bag_path));
   title.append(meta);
   const controls = el("div", "workspace-controls");
-  const edit = button("Редактировать сценарий", "button secondary small", () =>
+  const edit = button(t("Edit scenario"), "button secondary small", () =>
     openDrawer(workspace.preset),
   );
-  const parameters = button("Параметры", "button secondary small", () =>
+  const parameters = button(t("Parameters"), "button secondary small", () =>
     openVariables(workspace),
   );
   const remove = button(
@@ -346,17 +363,19 @@ function renderWorkspace(workspace) {
     async () => {
       if (
         confirm(
-          `Удалить панель «${workspace.name}»? Сценарий останется в редакторе.`,
+          t("Delete panel “{name}”? The scenario will be kept.", {
+            name: workspace.name,
+          }),
         )
       )
         await mutate(path(""), "DELETE");
     },
-    `Удалить панель ${workspace.name}`,
+    t("Delete panel {name}", { name: workspace.name }),
   );
   remove.disabled = active.length > 0;
   remove.title = active.length
-    ? "Сначала остановите команды этой панели"
-    : "Удалить панель";
+    ? t("Stop this panel’s commands first")
+    : t("Delete panel");
   controls.append(edit, parameters, remove);
   head.append(title, controls);
   card.append(head);
@@ -365,11 +384,14 @@ function renderWorkspace(workspace) {
     el(
       "span",
       "selection-label",
-      `Выбрано ${selected.length} из ${specs.length}`,
+      t("Selected {selected} of {total}", {
+        selected: selected.length,
+        total: specs.length,
+      }),
     ),
   );
   const choose = button(
-    selected.length === specs.length ? "Снять выбор" : "Выбрать все",
+    selected.length === specs.length ? t("Deselect all") : t("Select all"),
     "text-button",
     () =>
       mutate(path("/selection"), "POST", {
@@ -377,15 +399,18 @@ function renderWorkspace(workspace) {
       }),
   );
   const actions = el("div", "workspace-run-actions");
-  const run = button("▶ Запустить выбранные", "button primary", () =>
+  const run = button(t("▶ Run selected"), "button primary", () =>
     mutate(path("/run")),
   );
   run.disabled = !runnable.length || !connected;
-  run.title = "Запуск по порядку, без ожидания завершения предыдущей команды";
-  const stop = button("■ Завершить свои", "button danger", () =>
+  run.title = t(
+    "Commands start in order, without waiting for the previous command to finish",
+  );
+  const stop = button(t("■ Stop commands"), "button danger", () =>
     mutate(path("/stop")),
   );
   stop.disabled = !active.length || !connected;
+  stop.title = t("Stops only commands started by this panel");
   actions.append(run, stop);
   bar.append(choose, actions);
   card.append(bar);
@@ -442,43 +467,40 @@ function renderStep(workspace, spec, status, index) {
     el(
       "div",
       "mode",
-      `${String(index + 1).padStart(2, "0")} · ${target?.name || "Цель недоступна"} · ${spec.terminal ? "Терминал" : "Фон"}`,
+      `${String(index + 1).padStart(2, "0")} · ${target?.name || t("Environment unavailable")} · ${spec.terminal ? t("Terminal") : t("Background")}`,
     ),
   );
-  card.append(el("p", "status-text", status.message || "Готово к запуску"));
+  card.append(
+    el("p", "status-text", serverText(status.message) || t("Ready to run")),
+  );
   const code = el("pre", "command-code", spec.command);
-  card.append(disclosure(`${key}/command`, "Команда", code));
+  card.append(disclosure(`${key}/command`, t("Command"), code));
   if (status.log_tail) {
     const output = el("div", "output-content");
     output.append(el("pre", "log", status.log_tail));
     output.append(
-      button("Копировать вывод", "text-button", async () => {
+      button(t("Copy output"), "text-button", async () => {
         await navigator.clipboard.writeText(status.log_tail);
-        toast("Вывод скопирован");
+        toast(t("Output copied"));
       }),
     );
     card.append(
-      disclosure(
-        `${key}/log`,
-        "Последний вывод",
-        output,
-        status.status === "failed",
-      ),
+      disclosure(`${key}/log`, t("Output"), output, status.status === "failed"),
     );
   }
-  let label = "▶ Запустить",
+  let label = t("▶ Run"),
     endpoint = "run",
     disabled = !connected;
   if (status.status === "starting") {
-    label = "Запускается…";
+    label = t("Starting…");
     disabled = true;
   } else if (status.external) {
-    label = "Внешний процесс";
+    label = t("External process");
     disabled = true;
   } else if (status.owned || status.terminal_open) {
-    label = status.owned ? "■ Остановить" : "× Закрыть терминал";
+    label = status.owned ? t("■ Stop") : t("× Close terminal");
     endpoint = "stop";
-  } else if (status.status === "failed") label = "↻ Повторить";
+  } else if (status.status === "failed") label = t("↻ Retry");
   const control = button(
     label,
     `button step-action ${endpoint === "stop" ? "danger" : "secondary"}`,
@@ -519,7 +541,7 @@ function hideOverlay() {
 function newStep(index = 1) {
   return {
     id: createId("command"),
-    title: `Команда ${index}`,
+    title: t("Command {number}", { number: index }),
     command: "",
     target_id:
       state.settings.targets.find((target) => target.type === "local")?.id ||
@@ -536,10 +558,7 @@ function isDirty() {
   return draft && JSON.stringify(draft) !== savedDraft;
 }
 function allowDiscard() {
-  return (
-    !isDirty() ||
-    confirm("Есть несохранённые изменения сценария. Отбросить их?")
-  );
+  return !isDirty() || confirm(t("Discard unsaved changes to this scenario?"));
 }
 function choosePreset(preset) {
   if (!allowDiscard()) return;
@@ -567,9 +586,7 @@ function feedback(message = "", kind = "") {
   const node = $("#presetFeedback");
   const validation = validatePreset(draft, state.settings.targets);
   node.textContent =
-    message ||
-    validation ||
-    (isDirty() ? "Есть несохранённые изменения" : "Все изменения сохранены");
+    message || validation || (isDirty() ? t("Unsaved changes") : t("Saved"));
   node.className = `feedback ${kind || (!isDirty() && !validation ? "ok" : "")}`;
   $("#savePreset").disabled =
     !isDirty() ||
@@ -587,7 +604,7 @@ function renderPresetTabs() {
     return tab;
   });
   tabs.push(
-    button("＋ Новый", "button secondary small", () => {
+    button(t("＋ New scenario"), "button secondary small", () => {
       if (!allowDiscard()) return;
       draft = newDraft();
       savedDraft = JSON.stringify(draft);
@@ -630,8 +647,11 @@ function renderStepEditor() {
       const head = el("div", "edit-step-head");
       const title = el("input");
       title.value = step.title;
-      title.placeholder = "Название команды";
-      title.setAttribute("aria-label", `Название команды ${index + 1}`);
+      title.placeholder = t("Command name");
+      title.setAttribute(
+        "aria-label",
+        t("Command {number} name", { number: index + 1 }),
+      );
       title.oninput = () => {
         step.title = title.value;
         feedback();
@@ -641,13 +661,13 @@ function renderStepEditor() {
         "↑",
         "icon-button small",
         () => moveStep(index, -1),
-        "Переместить команду выше",
+        t("Move command up"),
       );
       const down = button(
         "↓",
         "icon-button small",
         () => moveStep(index, 1),
-        "Переместить команду ниже",
+        t("Move command down"),
       );
       up.disabled = index === 0;
       down.disabled = index === draft.steps.length - 1;
@@ -661,12 +681,12 @@ function renderStepEditor() {
             draft.steps.splice(index + 1, 0, {
               ...structuredClone(step),
               id: createId("command"),
-              title: `${step.title} — копия`,
+              title: t("{name} — copy", { name: step.title }),
             });
             renderStepEditor();
             feedback();
           },
-          "Копировать команду",
+          t("Duplicate command"),
         ),
         button(
           "×",
@@ -676,15 +696,18 @@ function renderStepEditor() {
             renderStepEditor();
             feedback();
           },
-          "Удалить команду",
+          t("Delete command"),
         ),
       );
       head.append(el("span", "step-number", String(index + 1)), title, tools);
       const command = el("textarea");
       command.value = step.command;
-      command.placeholder = "Например: python3 app.py --port {{port}}";
+      command.placeholder = t("e.g. python3 app.py --port {{port}}");
       command.spellcheck = false;
-      command.setAttribute("aria-label", `Текст команды ${index + 1}`);
+      command.setAttribute(
+        "aria-label",
+        t("Command {number} text", { number: index + 1 }),
+      );
       command.oninput = () => {
         step.command = command.value;
         feedback();
@@ -692,10 +715,10 @@ function renderStepEditor() {
       const grid = el("div", "edit-step-grid");
       grid.append(
         selectField(
-          "Где выполнять",
+          t("Run environment"),
           state.settings.targets.map((target) => [
             target.id,
-            `${target.name} · ${target.type === "docker" ? "Docker" : "локально"}`,
+            `${target.name} · ${target.type === "docker" ? "Docker" : t("local")}`,
           ]),
           step.target_id,
           (value) => {
@@ -706,10 +729,10 @@ function renderStepEditor() {
       );
       grid.append(
         selectField(
-          "Как запускать",
+          t("Run mode"),
           [
-            ["true", "В терминале · с вводом"],
-            ["false", "В фоне · без ввода"],
+            ["true", t("Terminal · interactive")],
+            ["false", t("Background · no input")],
           ],
           step.terminal,
           (value) => {
@@ -721,13 +744,13 @@ function renderStepEditor() {
       const advanced = el("div");
       advanced.append(
         fieldInput(
-          "Не запускать дубль в контейнере · regex",
+          t("External process pattern · regex (Docker)"),
           step.process_match,
           (value) => {
             step.process_match = value;
             feedback();
           },
-          "Необязательно",
+          t("Optional"),
         ),
       );
       card.append(
@@ -736,7 +759,7 @@ function renderStepEditor() {
         grid,
         disclosure(
           `editor/${step.id}/advanced`,
-          "Дополнительно",
+          t("Advanced"),
           advanced,
           Boolean(step.process_match),
         ),
@@ -769,7 +792,7 @@ async function savePreset() {
   draft = structuredClone(saved);
   savedDraft = JSON.stringify(draft);
   fillPreset();
-  toast("Сценарий сохранён");
+  toast(t("Scenario saved"));
 }
 function populateAppearance() {
   $("#appearanceAccent").value = appearance.accent;
@@ -831,12 +854,19 @@ function renderTargets() {
     ...settingsDraft.targets.map((target, index) => {
       const card = el("div", "target-card"),
         head = el("div", "target-head"),
-        title = el("div", "target-title", target.name || `Цель ${index + 1}`),
+        title = el(
+          "div",
+          "target-title",
+          target.name || t("Environment {number}", { number: index + 1 }),
+        ),
         type = el("select", "target-type");
-      type.setAttribute("aria-label", "Тип цели " + target.name);
+      type.setAttribute(
+        "aria-label",
+        t("Environment type for {name}", { name: target.name }),
+      );
       [
-        ["local", "Локальная система"],
-        ["docker", "Docker-контейнер"],
+        ["local", t("Local computer")],
+        ["docker", t("Docker container")],
       ].forEach(([value, label]) => {
         const option = el("option", "", label);
         option.value = value;
@@ -853,7 +883,7 @@ function renderTargets() {
         renderTargets();
       };
       const remove = el("button", "icon-button", "×");
-      remove.title = "Удалить цель";
+      remove.title = t("Delete environment");
       remove.disabled = settingsDraft.targets.length === 1;
       remove.onclick = () => {
         settingsDraft.targets.splice(index, 1);
@@ -863,49 +893,50 @@ function renderTargets() {
       card.append(head);
       const fields = el("div", "target-fields");
       fields.append(
-        fieldInput("Название", target.name, (value) => {
+        fieldInput(t("Name"), target.name, (value) => {
           target.name = value;
-          title.textContent = value || `Цель ${index + 1}`;
+          title.textContent =
+            value || t("Environment {number}", { number: index + 1 });
         }),
         fieldInput(
-          "Идентификатор",
+          t("ID"),
           target.id,
           (value) => (target.id = value),
-          "например, build-server",
+          t("e.g. build-server"),
         ),
         fieldInput(
           target.type === "docker"
-            ? "Папка внутри контейнера"
-            : "Рабочая папка",
+            ? t("Container working directory")
+            : t("Working directory"),
           target.workdir,
           (value) => (target.workdir = value),
           target.type === "docker" ? "/workspace" : "~/projects/tool",
         ),
         fieldInput(
-          "Команда подготовки окружения",
+          t("Setup command"),
           target.source_command,
           (value) => (target.source_command = value),
-          "например, source install/setup.bash",
+          t("e.g. source install/setup.bash"),
         ),
       );
       if (target.type === "docker")
         fields.append(
           fieldInput(
-            "Имя контейнера",
+            t("Container name"),
             target.container_name,
             (value) => (target.container_name = value),
           ),
           fieldInput(
-            "Папка проекта на хосте",
+            t("Host project directory"),
             target.host_workdir,
             (value) => (target.host_workdir = value),
             "~/projects/example",
           ),
           fieldInput(
-            "Команда запуска контейнера",
+            t("Container startup command"),
             target.start_command,
             (value) => (target.start_command = value),
-            "например, docker start my-container",
+            t("e.g. docker start my-container"),
           ),
         );
       card.append(fields);
@@ -932,13 +963,22 @@ function renderVariables() {
         key = el("input"),
         value = el("input"),
         remove = el("button", "icon-button", "×");
-      key.setAttribute("aria-label", "Имя переменной " + (index + 1));
-      value.setAttribute("aria-label", "Значение переменной " + (index + 1));
-      remove.setAttribute("aria-label", "Удалить переменную " + (index + 1));
-      key.placeholder = "имя";
+      key.setAttribute(
+        "aria-label",
+        t("Variable {number} name", { number: index + 1 }),
+      );
+      value.setAttribute(
+        "aria-label",
+        t("Variable {number} value", { number: index + 1 }),
+      );
+      remove.setAttribute(
+        "aria-label",
+        t("Delete variable {number}", { number: index + 1 }),
+      );
+      key.placeholder = t("name");
       key.value = item.key;
       key.oninput = () => (item.key = key.value);
-      value.placeholder = "значение";
+      value.placeholder = t("value");
       value.value = item.value;
       value.oninput = () => (item.value = value.value);
       remove.onclick = () => {
@@ -1002,7 +1042,7 @@ bindAction("#confirmCreate", async () => {
   const name = $("#newName").value.trim();
   if (!name) {
     $("#newName").focus();
-    throw new Error("Введите название панели");
+    throw new Error(t("Enter a panel name"));
   }
   await mutate("/api/workspaces", "POST", {
     name,
@@ -1012,10 +1052,10 @@ bindAction("#confirmCreate", async () => {
   $("#newName").value = "";
   $("#newBag").value = "";
   $("#createPanel").classList.add("hidden");
-  toast("Панель создана");
+  toast(t("Panel created"));
 });
 bindAction("#refreshButton", async () => {
-  if (await refresh(false)) toast("Статусы обновлены");
+  if (await refresh(false)) toast(t("Status refreshed"));
 });
 bindAction("#retryConnection", () => refresh(false));
 $("#presetsButton").onclick = () => openDrawer();
@@ -1038,7 +1078,7 @@ bindAction("#duplicatePreset", () => {
     ...structuredClone(draft),
     id: "",
     name: copyName(
-      draft.name || "Сценарий",
+      draft.name || t("Scenario"),
       state.presets.map((preset) => preset.name),
     ),
   };
@@ -1051,7 +1091,11 @@ bindAction("#duplicatePreset", () => {
   $("#presetName").focus();
 });
 bindAction("#deletePreset", async () => {
-  if (!draft.id || !confirm(`Удалить сценарий «${draft.name}»?`)) return;
+  if (
+    !draft.id ||
+    !confirm(t("Delete scenario “{name}”?", { name: draft.name }))
+  )
+    return;
   await mutate(`/api/presets/${encodeURIComponent(draft.id)}`, "DELETE");
   draft = structuredClone(state.presets[0] || newDraft());
   savedDraft = JSON.stringify(draft);
@@ -1074,7 +1118,7 @@ $("#importPreset").onchange = async (event) => {
   try {
     if (!allowDiscard()) return;
     if (file.size > 1024 * 1024)
-      throw new Error("Сценарий должен быть меньше 1 МБ");
+      throw new Error(t("Scenario files must be smaller than 1 MB"));
     const imported = importPreset(
       JSON.parse(await file.text()),
       state.settings.targets,
@@ -1083,12 +1127,10 @@ $("#importPreset").onchange = async (event) => {
     draft = imported;
     savedDraft = "";
     fillPreset();
-    toast("Импортировано как новый сценарий. Проверьте команды и сохраните.");
+    toast(t("Imported as a new scenario. Review the commands and save."));
   } catch (error) {
     toast(
-      error instanceof SyntaxError
-        ? "Файл содержит некорректный JSON"
-        : error.message,
+      error instanceof SyntaxError ? t("Invalid JSON file") : error.message,
       true,
     );
   } finally {
@@ -1102,7 +1144,7 @@ document
 bindAction("#addTarget", () => {
   settingsDraft.targets.push({
     id: createId("target"),
-    name: "Новая цель",
+    name: t("New environment"),
     type: "local",
     workdir: "~",
     source_command: "",
@@ -1112,7 +1154,7 @@ bindAction("#addTarget", () => {
 bindAction("#saveSettings", async () => {
   const ids = settingsDraft.targets.map((target) => target.id.trim());
   if (ids.some((id) => !id) || new Set(ids).size !== ids.length)
-    throw new Error("Идентификаторы целей должны быть заполнены и различаться");
+    throw new Error(t("Environment IDs must be nonempty and unique"));
   if (JSON.stringify(settingsDraft) !== JSON.stringify(state.settings))
     await mutate("/api/settings", "POST", settingsDraft);
   localStorage.setItem(
@@ -1121,7 +1163,7 @@ bindAction("#saveSettings", async () => {
   );
   appearanceBeforeSettings = null;
   hideOverlay();
-  toast("Настройки сохранены");
+  toast(t("Settings saved"));
 });
 document.querySelectorAll("[data-theme-choice]").forEach(
   (control) =>
@@ -1176,7 +1218,7 @@ bindAction("#addVariable", () => {
 });
 bindAction("#saveVariables", async () => {
   const name = $("#workspaceName").value.trim();
-  if (!name) throw new Error("Введите название панели");
+  if (!name) throw new Error(t("Enter a panel name"));
   const variables = variablesFromRows(variablesDraft);
   const workspace = state.workspaces.find(
     (item) => item.id === variablesWorkspaceId,
@@ -1190,7 +1232,7 @@ bindAction("#saveVariables", async () => {
     body.preset_id = $("#workspacePreset").value;
   await mutate(workspacePath(variablesWorkspaceId, "/update"), "POST", body);
   hideOverlay();
-  toast("Параметры сохранены");
+  toast(t("Parameters saved"));
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && activeOverlay) {
@@ -1238,6 +1280,25 @@ document.querySelectorAll(".field").forEach((field) => {
   if (label && control?.id) label.htmlFor = control.id;
 });
 applyAppearance();
+translateDocument();
+$("#languageSelect").value = getLanguage();
+$("#languageSelect").onchange = (event) => {
+  setLanguage(event.target.value);
+  translateDocument();
+  render();
+  if (activeOverlay?.id === "presetDrawer") {
+    renderPresetTabs();
+    renderStepEditor();
+    feedback();
+  } else if (activeOverlay?.id === "settingsModal") renderTargets();
+  else if (activeOverlay?.id === "variablesModal") renderVariables();
+  $("#toast").className = "toast";
+  try {
+    localStorage.setItem("scenario-runner-language", getLanguage());
+  } catch {
+    toast(t("Could not save the language preference."), true);
+  }
+};
 refresh(false);
 setInterval(() => {
   if (!document.hidden) refresh(true);

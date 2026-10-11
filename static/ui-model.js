@@ -1,3 +1,4 @@
+import { t } from "./i18n.js";
 /** Pure UI rules shared by the editor, dashboard and regression tests. */
 export const reservedVariables = new Set([
   "project_path",
@@ -13,14 +14,14 @@ export function isActive(step = {}) {
 }
 
 export function statusLabel(step = {}) {
-  if (step.status === "failed") return "Ошибка";
-  if (step.status === "starting") return "Запуск";
-  if (step.owned) return "Работает";
-  if (step.terminal_open) return "Терминал открыт";
-  if (step.external) return "Внешний процесс";
-  if (step.return_code === 0) return "Выполнено";
-  if (step.status === "stopped") return "Остановлено";
-  return "Готово";
+  if (step.status === "failed") return t("Failed");
+  if (step.status === "starting") return t("Starting");
+  if (step.owned) return t("Running");
+  if (step.terminal_open) return t("Terminal open");
+  if (step.external) return t("External process");
+  if (step.return_code === 0) return t("Completed");
+  if (step.status === "stopped") return t("Stopped");
+  return t("Ready");
 }
 
 export function matchesWorkspace(workspace, query, filter = "all") {
@@ -49,13 +50,16 @@ export function matchesWorkspace(workspace, query, filter = "all") {
 }
 
 export function validatePreset(preset, targets) {
-  if (!preset.name?.trim()) return "Введите название сценария";
+  if (!preset.name?.trim()) return t("Enter a scenario name");
   if (!Array.isArray(preset.steps) || !preset.steps.length)
-    return "Добавьте хотя бы одну команду";
+    return t("Add at least one command");
   for (const [index, step] of preset.steps.entries()) {
-    if (!step.command?.trim()) return `Введите команду ${index + 1}`;
+    if (!step.command?.trim())
+      return t("Enter command {number}", { number: index + 1 });
     if (!targets.some((target) => target.id === step.target_id))
-      return `Выберите существующую цель для команды ${index + 1}`;
+      return t("Choose an available environment for command {number}", {
+        number: index + 1,
+      });
   }
   return "";
 }
@@ -67,12 +71,14 @@ export function variablesFromRows(rows) {
     if (!key && !row.value.trim()) continue;
     if (!variableNamePattern.test(key))
       throw new Error(
-        "Имя переменной: латинские буквы, цифры, _, . или -. Начните с буквы или _.",
+        t(
+          "Variable names must start with a letter or _. Use Latin letters, digits, _, . or -.",
+        ),
       );
     if (reservedVariables.has(key))
-      throw new Error(`${key} — встроенная переменная пути`);
+      throw new Error(t("{name} is a built-in path variable", { name: key }));
     if (Object.hasOwn(variables, key))
-      throw new Error(`Переменная ${key} указана дважды`);
+      throw new Error(t("Variable {name} is duplicated", { name: key }));
     variables[key] = row.value;
   }
   return variables;
@@ -85,7 +91,9 @@ export function importPreset(raw, targets, makeId) {
     Array.isArray(raw) ||
     !Array.isArray(raw.steps)
   )
-    throw new Error("JSON должен содержать сценарий со списком steps");
+    throw new Error(
+      t("The JSON file must contain a scenario with a steps array"),
+    );
   const preset = {
     id: "",
     name: typeof raw.name === "string" ? raw.name : "",
@@ -93,19 +101,24 @@ export function importPreset(raw, targets, makeId) {
     workdir: String(raw.workdir || raw.project_path || ""),
     steps: raw.steps.map((step, index) => {
       if (!step || typeof step.command !== "string")
-        throw new Error(`Некорректная команда ${index + 1}`);
+        throw new Error(t("Invalid command {number}", { number: index + 1 }));
       if (
         ["terminal", "selected"].some(
           (key) => key in step && typeof step[key] !== "boolean",
         )
       )
         throw new Error(
-          `Режим и выбор команды ${index + 1} должны быть true или false`,
+          t(
+            "Run mode and selection for command {number} must be true or false",
+            { number: index + 1 },
+          ),
         );
       const execution = String(step.execution || "");
       return {
         id: makeId(),
-        title: String(step.title || `Команда ${index + 1}`),
+        title: String(
+          step.title || t("Command {number}", { number: index + 1 }),
+        ),
         command: step.command,
         target_id:
           step.target_id ||
@@ -127,8 +140,9 @@ export function importPreset(raw, targets, makeId) {
 }
 
 export function copyName(name, names) {
-  let result = `${name} — копия`,
+  let result = t("{name} — copy", { name: name }),
     number = 2;
-  while (names.includes(result)) result = `${name} — копия ${number++}`;
+  while (names.includes(result))
+    result = t("{name} — copy {number}", { name: name, number: number++ });
   return result;
 }
