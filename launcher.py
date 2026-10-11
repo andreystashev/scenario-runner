@@ -60,6 +60,17 @@ def matches(value, record):
             and value.get("config") == str(CONFIG_DIR))
 
 
+def startup_error(message):
+    try:
+        with LOG_FILE.open("rb") as log:
+            log.seek(0, os.SEEK_END)
+            log.seek(max(0, log.tell() - 4000))
+            diagnostic = log.read().decode("utf-8", errors="replace").strip()
+    except OSError:
+        diagnostic = "Журнал недоступен"
+    return RuntimeError(f"{message} Лог: {LOG_FILE}\n{diagnostic}")
+
+
 def show_url(port):
     url = f"http://127.0.0.1:{port}"
     print(f"Scenario Runner: {url}\nЛог: {LOG_FILE}")
@@ -81,7 +92,7 @@ def start(port):
         raise RuntimeError(f"Порт {port} уже занят другим сервером. Выберите SCENARIO_RUNNER_PORT.")
     token = uuid.uuid4().hex
     with LOG_FILE.open("ab") as log:
-        process = subprocess.Popen([sys.executable, str(APP_DIR / "server.py"), "--host", "127.0.0.1",
+        process = subprocess.Popen([sys.executable, "-u", str(APP_DIR / "server.py"), "--host", "127.0.0.1",
                                     "--port", str(port), "--instance-id", token], cwd=APP_DIR,
                                    stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                    start_new_session=True, close_fds=True)
@@ -91,14 +102,18 @@ def start(port):
         temporary.write_text(json.dumps(record) + "\n")
         temporary.replace(RECORD)
         deadline = time.monotonic() + 10
+        last_health = {}
         while time.monotonic() < deadline:
             if process.poll() is not None:
-                raise RuntimeError(f"Сервер завершился при запуске (код {process.returncode}). Лог: {LOG_FILE}")
-            if matches(health(port), record):
+                raise startup_error(f"Сервер завершился при запуске (код {process.returncode}).")
+            last_health = health(port)
+            if matches(last_health, record):
                 show_url(port)
                 return
             time.sleep(.1)
-        raise RuntimeError(f"Сервер не ответил за 10 секунд. Лог: {LOG_FILE}")
+        received_config = last_health.get("config", "нет ответа health")
+        raise startup_error(f"Сервер не ответил за 10 секунд. "
+                            f"Каталог health: {received_config}; ожидался {CONFIG_DIR}.")
     except BaseException:
         if process.poll() is None:
             process.terminate()

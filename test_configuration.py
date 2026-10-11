@@ -14,7 +14,7 @@ import server
 class ConfigurationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.http = server.ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        cls.http = server.LocalServer(("127.0.0.1", 0), server.Handler)
         cls.thread = threading.Thread(target=cls.http.serve_forever, daemon=True)
         cls.thread.start()
 

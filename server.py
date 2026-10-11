@@ -14,6 +14,7 @@ import shlex
 import shutil
 import signal
 import socket
+import socketserver
 import sys
 import subprocess
 import threading
@@ -971,6 +972,18 @@ def state_payload() -> dict:
         }
 
 
+class LocalServer(ThreadingHTTPServer):
+    """Loopback HTTP server whose startup does not require reverse DNS."""
+
+    def __init__(self, address, handler):
+        self.address_family = socket.AF_INET6 if address[0] == "::1" else socket.AF_INET
+        super().__init__(address, handler)
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "ScenarioRunner/0.1"
 
@@ -1224,12 +1237,11 @@ def main() -> None:
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         parser.error("Сервер выполняет команды без авторизации: используйте только loopback host")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    LOG.info("Загрузка конфигурации: %s", CONFIG_DIR)
     load_all()
     refresh_status_cache()
     threading.Thread(target=status_worker, name="status-worker", daemon=True).start()
-    class LocalServer(ThreadingHTTPServer):
-        address_family = socket.AF_INET6 if args.host == "::1" else socket.AF_INET
-
+    LOG.info("Открытие локального HTTP-порта %s:%s", args.host, args.port)
     server = LocalServer((args.host, args.port), Handler)
     server.instance_id = args.instance_id
     LOG.info("Scenario Runner %s: http://%s:%s", APP_VERSION, args.host, args.port)

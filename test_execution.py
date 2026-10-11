@@ -188,6 +188,13 @@ class ExecutionTests(unittest.TestCase):
                 server.normalize_preset({"name": "Test", "steps": [step]})
         self.assertEqual(len({server.unique_id("test") for _ in range(1000)}), 1000)
 
+    def test_http_start_does_not_require_working_reverse_dns(self):
+        with patch.object(server.socket, "getfqdn", side_effect=OSError("DNS unavailable")):
+            http = server.LocalServer(("127.0.0.1", 0), server.Handler)
+            self.addCleanup(http.server_close)
+        self.assertEqual(http.server_name, "127.0.0.1")
+        self.assertGreater(http.server_port, 0)
+
 
 class LauncherTests(unittest.TestCase):
     def setUp(self):
@@ -245,6 +252,12 @@ class LauncherTests(unittest.TestCase):
     def test_concurrent_start_creates_one_server(self):
         command = [sys.executable, str(launcher.APP_DIR / "launcher.py"), "start"]
         processes = [subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(2)]
+        def cleanup_launchers():
+            for process in processes:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate(timeout=5)
+        self.addCleanup(cleanup_launchers)
         for process in processes:
             out, err = process.communicate(timeout=15)
             self.assertEqual(process.returncode, 0, out + err)
