@@ -1,8 +1,24 @@
 # Scenario Runner
 
-Локальный веб-интерфейс для повторяемых команд и последовательностей. Команды выполняются на компьютере или в настроенных Docker-контейнерах. Приложение работает на Python без сторонних пакетов.
+[![Tests](https://github.com/andreystashev/scenario-runner/actions/workflows/tests.yml/badge.svg)](https://github.com/andreystashev/scenario-runner/actions/workflows/tests.yml)
 
-## Запуск
+A local web interface for repeatable commands and workflows on **macOS and Linux**. Run commands on your computer or in configured Docker containers, group them into reusable presets, and monitor them from named workspace panels.
+
+The application uses the **Python standard library** and a browser interface. Docker is optional and only needed for container targets.
+
+## Features
+
+- Run each command in a terminal window or in the background.
+- Mix local and Docker targets within one preset.
+- Set workspace paths and variables such as `{{project_path}}` and `{{bag_path}}`.
+- Import and export presets as JSON.
+- Detect existing container processes using a regular expression.
+- Stop commands and terminal windows created by a workspace.
+- Customize the theme, accent color, typography, scale, and density.
+
+## Quick start
+
+Requirements: **Python 3.9+**, Bash, and macOS or Linux.
 
 ```bash
 git clone https://github.com/andreystashev/scenario-runner.git
@@ -10,109 +26,73 @@ cd scenario-runner
 ./start
 ```
 
-Интерфейс откроется на <http://127.0.0.1:8010>. Повторный вызов `./start` просто откроет уже работающий интерфейс.
+Open **<http://127.0.0.1:8010>**. The launcher starts the server in the background and opens your browser. Running `./start` again opens the existing server. On macOS, you can also double-click `start.command` in Finder.
 
-На macOS и Linux `./start` запускает локальный сервер в фоне без systemd и без Docker-образа приложения. На Mac можно также открыть `start.command` двойным кликом в Finder. Сервер работает до остановки или выхода из системы; автозапуск при входе не устанавливается.
-
-Нужен **Python 3.9+**. На macOS с Homebrew его можно установить командой `brew install python`. Если нужный Python не находится в PATH:
+The first launch starts with no presets. Create one in the scenario editor, add commands, then create a workspace panel to run it. For a first local command, try:
 
 ```bash
-SCENARIO_RUNNER_PYTHON=/opt/homebrew/bin/python3 ./start
+pwd; echo "Hello from Scenario Runner"
 ```
 
-На Intel Mac путь Homebrew обычно `/usr/local/bin/python3`. Тот же параметр поддерживает `./stop.sh`. Для диагностики без фонового запуска используйте `./start --foreground`.
-
-При обновлении старой Linux-установки сначала остановите прежний сервис: `systemctl --user disable --now scenario-runner.service`. Настройки и сценарии сохраняются.
-
-При первом запуске список сценариев пуст. Создайте первый сценарий через «Редактор сценариев», затем добавьте панель для запуска. Сценарии можно импортировать и экспортировать в JSON.
-
-Остановка веб-приложения:
+Stop the web server with:
 
 ```bash
 ./stop.sh
 ```
 
-Остановка сервера не завершает запущенные команды. Ими следует управлять из панели сценария.
+Stopping the server leaves running scenario commands alive. Stop those commands from their workspace panel first when needed. The launcher does not install login autostart.
 
-## Возможности
+## Configure a workflow
 
-- команды на macOS, Linux или в любых настроенных Docker-контейнерах;
-- запуск в отдельном терминале или в фоне;
-- независимый выбор цели и режима запуска для каждой команды;
-- пресеты с произвольным количеством команд;
-- именованные рабочие панели с необязательным основным путём;
-- собственные переменные панели вида `{{имя}}`, а также `{{project_path}}`, `{{bag_path}}`, `{{bag_folder}}`;
-- обнаружение внешних процессов внутри контейнера по регулярному выражению;
-- остановка только процессов и терминалов, созданных самим Scenario Runner;
-- импорт и экспорт пресетов JSON;
-- тёмная/светлая тема, акцентный цвет, шрифт, масштаб, плотность и прозрачность интерфейса.
+1. Add a target in settings: local or Docker.
+2. Create a preset and add commands in the scenario editor.
+3. Choose the target and terminal/background mode for each command.
+4. Create a workspace panel and set its path and custom variables.
 
-Изначально настроена только локальная цель. Docker-цели добавляются через настройки: задайте имя контейнера, папки на хосте и внутри него, команду запуска и необязательную команду подготовки окружения. Если контейнер остановлен, Scenario Runner откроет отдельный терминал с настроенной командой запуска.
+Docker targets need a container name, host/container paths, a launch command, and optionally an environment setup command. If the container is stopped, the application opens a terminal with its configured launch command.
 
-Кнопка «Завершить свои» не останавливает контейнер и чужие процессы: она завершает только команды и терминалы, созданные этой рабочей панелью.
+Commands run in **Bash**, including when your usual shell is zsh. Background mode has no interactive input or TTY; use terminal mode for commands that prompt for input.
 
-## Как собрать свой shortcut
+The server listens on loopback and executes commands with your account's permissions. Review imported commands before running them and keep the port local.
 
-1. В настройках добавьте цель: локальную или Docker.
-2. В редакторе сценариев создайте пресет и добавьте команды.
-3. Для каждой команды выберите цель и запуск в терминале либо в фоне.
-4. Создайте рабочую панель. Через кнопку «Параметры» можно задать основной путь и свои переменные.
+## Configuration and logs
 
-Для локального сценария Docker вообще не требуется.
-
-Режим «В фоне» не имеет интерактивного ввода и TTY. Команды вроде `sudo`, `./d`, SSH с запросом пароля и другие интерактивные программы следует запускать в терминале. Если запуск Docker-команды невозможен из-за неверной рабочей папки, интерфейс покажет найденный внутри контейнера путь, а терминал при ранней ошибке останется открытым.
-
-## Данные
-
-- настройки и пресеты: `~/.config/scenario-runner/`;
-- журналы и runtime-файлы: `~/.cache/scenario-runner/`;
-- журнал сервера: `~/.cache/scenario-runner/server.log`.
-
-Для другого порта:
+| Location | Contents |
+| --- | --- |
+| `~/.config/scenario-runner/` | Settings, presets, and workspace definitions |
+| `~/.cache/scenario-runner/` | Runtime files and logs |
+| `~/.cache/scenario-runner/server.log` | Server log |
 
 ```bash
 SCENARIO_RUNNER_PORT=8020 ./start
+SCENARIO_RUNNER_NO_OPEN=1 ./start
+./start --foreground
 ```
 
-Зависимости: macOS или Linux с Python 3.9+ и Bash. На macOS используется встроенный Terminal.app; на Linux — `gnome-terminal` или `x-terminal-emulator`. Фоновые команды не требуют терминального приложения. Docker CLI и работающий Docker Engine / Docker Desktop нужны только для Docker-целей. Linux-контейнерам нужны Bash, Python 3, `ps` и `tee`.
+Stop the existing server before changing the port. See the [usage and troubleshooting guide](docs/usage.md) for Python selection, isolated installations, terminal permissions, and migration from the old Linux service.
 
-При первом терминальном запуске macOS может запросить разрешение на управление Terminal.app. Разрешите его в «Системные настройки → Конфиденциальность и безопасность → Автоматизация» для приложения, из которого запущен сервер. Отказ показывается в интерфейсе как ошибка, фоновые команды продолжают работать. Команды сценария выполняются **в Bash**, даже если ваша обычная оболочка — zsh; для своего окружения задайте команду подготовки цели.
+## Architecture
 
-Сервер слушает только loopback и выполняет команды с вашими правами. Импортируйте сценарии из доверенных источников и просматривайте команды перед запуском. Не публикуйте этот порт через прокси или туннель.
+| Component | Responsibility |
+| --- | --- |
+| [launcher.py](launcher.py) | Start/stop coordination, browser opening, and server identity checks |
+| [server.py](server.py) | Local HTTP API, configuration, targets, and command lifecycle |
+| [static/](static/) | Browser interface |
+| `start`, `start.command`, `stop.sh` | Shell and Finder entry points |
 
-Проверка перед запуском:
+Configuration changes are validated and persisted before they become visible in memory. JSON writes use a separate temporary file, `fsync`, and atomic replacement. Failed validation or saving leaves the previous configuration intact. Process actions already performed cannot be rolled back by a failed configuration save.
+
+## Development and tests
+
+No package installation is required:
 
 ```bash
 python3 -m unittest -q
+python3 -m py_compile server.py launcher.py
+bash -n start start.sh stop.sh start.command
+node --check static/app.js
 ```
 
-## Надёжность настроек и проверки
+Node.js is only needed for the optional JavaScript syntax check. GitHub Actions runs checks on macOS and Linux with Python 3.9, 3.12, and 3.13.
 
-Изменения настроек, пресетов и панелей сначала проверяются и сохраняются в JSON,
-а затем становятся видны в приложении. Если проверка или запись не удалась,
-прежняя конфигурация остаётся в памяти и на диске. Это относится к созданию,
-редактированию, выбору команд и удалению конфигурации; уже запущенные или
-остановленные процессы при ошибке сохранения не откатываются.
-
-JSON записывается через отдельный временный файл в той же директории с `fsync`
-и атомарной заменой. При ошибке временный файл удаляется. Панель с отсутствующим
-пресетом пропускается при загрузке с записью в журнал: остальные панели доступны,
-а исходный `workspaces.json` при загрузке не перезаписывается.
-
-Тесты проверяют выполнение и остановку настоящих безвредных локальных команд, повторный и конкурентный запуск сервера, конфликт порта, защиту чужих процессов и неверные пресеты, отказы записи, согласованность памяти и файлов,
-удаление конфигурации и ответы API. HTTP-проверки запускают сервер на временном
-локальном порту и используют отдельные временные каталоги. Команды тестов и их файлы изолированы во временных каталогах. Docker-контейнеры, Terminal.app и пользовательские настройки автоматические тесты не затрагивают. CI запускает проверки на macOS и Linux с Python 3.9, 3.12 и 3.13.
-
-## Повторный запуск и диагностика
-
-Повторный `./start` открывает тот же сервер. Одновременные запуски сериализуются файловой блокировкой. Для смены порта сначала выполните `./stop.sh`. Чужой сервер на выбранном порту не принимается за Scenario Runner; при конфликте приложение не запускается и не завершает владельца порта.
-
-`SCENARIO_RUNNER_CONFIG_DIR` и `SCENARIO_RUNNER_CACHE_DIR` позволяют изолировать несколько установок. Используйте одинаковые значения при запуске и остановке. `SCENARIO_RUNNER_NO_OPEN=1 ./start` запускает сервер без открытия браузера. Runtime-файлы серверного процесса: `server.json` и `launcher.lock` в каталоге кэша. При остановке проверяются путь сервера и уникальный идентификатор процесса; устаревший PID не используется для завершения чужого процесса.
-
-Пустая команда и неверный regex отклоняются при сохранении. Несуществующая локальная рабочая папка выдаёт ошибку до запуска; заменять её домашней папкой приложение не будет. Изменять цель с активными командами можно после их остановки.
-
-Быстрая ручная проверка: создайте локальный сценарий с `pwd; echo "Hello from Scenario Runner"`, запустите в фоне, затем в терминале. Проверьте вывод, код завершения и кнопку остановки. Для проверки Docker создайте цель с существующим Linux-контейнером и выполните `pwd; echo "Hello from Docker"` в обоих режимах.
-
-На macOS в Terminal передаётся короткая команда запуска отдельного файла; длинная служебная обвязка и многострочные кавычки больше не вставляются в строку ввода. Подготовка login-окружения Bash повторно не запускается: используется окружение окна Terminal и команда подготовки цели.
-
-Кнопка остановки завершает процессы и закрывает отдельное окно Terminal, созданное для команды. Если вы добавили в него другие вкладки, приложение выдаст ошибку и сохранит возможность повторить закрытие; чужие вкладки оно не закрывает. Ошибка AppleScript не считается успешной остановкой окна. Опрос статусов не пересоздаёт панели, если их данные не изменились.
+Tests use temporary directories, local HTTP ports, and harmless local commands. They cover startup, port conflicts, command stopping, process ownership, configuration validation, failed writes, and API responses. They do not automate Terminal.app or Docker integration and do not touch your saved settings.
