@@ -70,6 +70,21 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(server.STATE_REVISION, 0)
         self.assertEqual(server.WORKSPACE_REVISIONS, {})
 
+    def test_new_launch_does_not_inherit_cached_completion(self):
+        workspace = server.workspaces[0]
+        workspace["steps"]["command-1"].update(status="starting", started_at=12345)
+        server.record_revision(workspace)
+        cached = copy.deepcopy(workspace)
+        cached["steps"]["command-1"].update(status="terminal", return_code=0, terminal_open=True, owned=False)
+        server.STATUS_CACHE["workspaces"] = [cached]
+        state = server.state_payload()
+        step = state["workspaces"][0]["steps"]["command-1"]
+        self.assertEqual(step["status"], "starting")
+        self.assertEqual(step["started_at"], 12345)
+        self.assertNotIn("return_code", step)
+        self.assertFalse(step["terminal_open"])
+
+
     def test_foreign_host_is_rejected_for_reads_and_writes(self):
         for method in ("GET", "POST"):
             status, _ = self.request("/api/state" if method == "GET" else "/api/settings", {}, method=method,

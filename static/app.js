@@ -1,6 +1,7 @@
 const $ = selector => document.querySelector(selector);
 const el = (tag, className = "", text = "") => { const node = document.createElement(tag); node.className = className; if (text !== "") node.textContent = text; return node; };
-let state = null, mutation = 0, pollBusy = false, draft = null, savedDraft = "", settingsDraft = null, connected = true;
+let state = null, mutation = 0, pollBusy = false, draft = null, savedDraft = "", settingsDraft = null, connected = true, pendingMutations = 0;
+let renderedPanels = "", renderedPresets = "";
 let variablesWorkspaceId = null, variablesDraft = [], toastTimer = null, lastInteractionAt = Date.now();
 
 const palettes = {
@@ -31,12 +32,12 @@ async function api(path, options = {}) {
 }
 function editingNow() { const active = document.activeElement; const overlay = $("#presetDrawer").classList.contains("open") || !$("#settingsModal").classList.contains("hidden") || !$("#variablesModal").classList.contains("hidden"); return overlay || Date.now() - lastInteractionAt < 1500 || Boolean(active?.matches("input, select, textarea")); }
 async function refresh(silent = true) {
-  if (pollBusy) return; pollBusy = true; const epoch = mutation;
+  if (pollBusy || pendingMutations) return; pollBusy = true; const epoch = mutation;
   try { const next = await api("/api/state"); if (epoch === mutation) { state = next; connected = true; if (!silent || !editingNow()) render(); else renderHeader(); } }
   catch (error) { connected = false; renderHeader(); if (!silent) toast(error.message, true); return false; } finally { pollBusy = false; }
   return true;
 }
-async function mutate(path, method = "POST", body = {}) { mutation += 1; try { state = await api(path, { method, body: JSON.stringify(body) }); render(); return state; } catch (error) { toast(error.message, true); throw error; } }
+async function mutate(path, method = "POST", body = {}) { mutation += 1; pendingMutations += 1; try { state = await api(path, { method, body: JSON.stringify(body) }); render(); return state; } catch (error) { toast(error.message, true); throw error; } finally { pendingMutations -= 1; } }
 function targetById(id) { return state?.settings?.targets?.find(target => target.id === id) || state?.settings?.targets?.[0]; }
 function optionList(select, active = "") { select.replaceChildren(...state.presets.map(preset => { const option = el("option", "", preset.name); option.value = preset.id; option.selected = preset.id === active; return option; })); }
 function renderHeader() {
@@ -44,7 +45,23 @@ function renderHeader() {
   if (!connected) { node.textContent = "Нет связи с сервером"; node.className = "container-status"; node.title = "Запустите ./start; подключение восстановится автоматически"; return; }
   node.textContent = `${ready}/${targets.length} целей доступны`; node.className = `container-status${ready === targets.length ? " running" : ""}`; node.title = targets.map(target => `${target.running ? "●" : "○"} ${target.name}`).join("\n");
 }
-function render() { if (!state) return; renderHeader(); optionList($("#newPreset"), $("#newPreset").value || state.presets[0]?.id); $("#createButton").disabled = state.presets.length === 0; $("#createButton").title = state.presets.length ? "" : "Сначала создайте сценарий в редакторе"; $("#workspaceList").replaceChildren(...state.workspaces.map(renderWorkspace)); $("#emptyState").classList.toggle("hidden", state.workspaces.length > 0); }
+function render() {
+  if (!state) return;
+  renderHeader();
+  const presetsKey = JSON.stringify(state.presets);
+  if (presetsKey !== renderedPresets) {
+    optionList($("#newPreset"), $("#newPreset").value || state.presets[0]?.id);
+    renderedPresets = presetsKey;
+  }
+  $("#createButton").disabled = state.presets.length === 0;
+  $("#createButton").title = state.presets.length ? "" : "Сначала создайте сценарий в редакторе";
+  const panelsKey = JSON.stringify(state.workspaces);
+  if (panelsKey !== renderedPanels) {
+    $("#workspaceList").replaceChildren(...state.workspaces.map(renderWorkspace));
+    renderedPanels = panelsKey;
+  }
+  $("#emptyState").classList.toggle("hidden", state.workspaces.length > 0);
+}
 
 function renderWorkspace(workspace) {
   const card = el("article", "workspace"), head = el("div", "workspace-head"), title = el("div", "workspace-title"); title.append(el("h2", "", workspace.name));
@@ -106,13 +123,13 @@ document.addEventListener("pointerdown", () => { lastInteractionAt = Date.now();
 $("#createButton").onclick = () => { $("#createPanel").classList.remove("hidden"); $("#newName").focus(); }; $("#cancelCreate").onclick = () => $("#createPanel").classList.add("hidden");
 $("#confirmCreate").onclick = async () => { const name = $("#newName").value.trim(); if (!name) return toast("Введите название панели", true); await mutate("/api/workspaces", "POST", { name, bag_path: $("#newBag").value.trim(), preset_id: $("#newPreset").value }); $("#newName").value = ""; $("#newBag").value = ""; $("#createPanel").classList.add("hidden"); };
 $("#refreshButton").onclick = () => refresh(false).then(ok => { if (ok) { render(); toast("Статусы и сценарии обновлены"); } }); $("#presetsButton").onclick = openDrawer; $("#drawerBackdrop").onclick = closeDrawer; document.querySelectorAll(".close-drawer").forEach(node => node.onclick = closeDrawer); [$("#presetName"), $("#presetDescription"), $("#presetProject")].forEach(node => node.oninput = syncDraftFields);
-$("#addStep").onclick = () => { const number = draft.steps.length + 1; draft.steps.push({ id: `command-${number}`, title: `Команда ${number}`, command: "", target_id: "local", terminal: true, selected: true, process_match: "" }); renderStepEditor(); feedback(); };
+$("#addStep").onclick = () => { const number = draft.steps.length + 1; draft.steps.push({ id: `command-${crypto.randomUUID()}`, title: `Команда ${number}`, command: "", target_id: "local", terminal: true, selected: true, process_match: "" }); renderStepEditor(); feedback(); };
 $("#savePreset").onclick = async () => { syncDraftFields(); try { const next = await mutate("/api/presets", "POST", draft); const saved = next.presets.find(item => item.id === draft.id) || next.presets.find(item => item.name === draft.name && !item.builtin); if (saved) { draft = structuredClone(saved); savedDraft = JSON.stringify(draft); fillPreset(); } feedback("✓ Пресет сохранён", "ok"); } catch (error) { feedback(error.message, "error"); } };
 $("#deletePreset").onclick = async () => { if (!draft.id) return; await mutate(`/api/presets/${encodeURIComponent(draft.id)}`, "DELETE"); draft = newDraft(); savedDraft = ""; fillPreset(); };
 $("#exportPreset").onclick = () => { syncDraftFields(); const blob = new Blob([JSON.stringify(draft, null, 2)], { type: "application/json" }), url = URL.createObjectURL(blob), anchor = el("a"); anchor.href = url; anchor.download = `${draft.id || "scenario"}.json`; anchor.click(); URL.revokeObjectURL(url); };
 $("#importPreset").onchange = async event => { const file = event.target.files[0]; if (!file) return; try { const imported = JSON.parse(await file.text()); if (!imported || typeof imported !== "object" || !Array.isArray(imported.steps) || !imported.steps.length || imported.steps.some(step => !step || typeof step !== "object" || typeof step.command !== "string")) throw new Error("Invalid preset"); draft = imported; draft.id ||= ""; draft.builtin = false; savedDraft = ""; fillPreset(); } catch { toast("Не удалось прочитать JSON", true); } event.target.value = ""; };
 $("#settingsButton").onclick = openSettings; document.querySelectorAll(".close-settings").forEach(node => node.onclick = () => $("#settingsModal").classList.add("hidden"));
-$("#addTarget").onclick = () => { settingsDraft.targets.push({ id: `target-${settingsDraft.targets.length + 1}`, name: "Новая цель", type: "local", workdir: "~", source_command: "" }); renderTargets(); };
+$("#addTarget").onclick = () => { settingsDraft.targets.push({ id: `target-${crypto.randomUUID()}`, name: "Новая цель", type: "local", workdir: "~", source_command: "" }); renderTargets(); };
 $("#saveSettings").onclick = async () => { await mutate("/api/settings", "POST", { targets: settingsDraft.targets }); localStorage.setItem("scenario-runner-appearance-v1", JSON.stringify(appearance)); $("#settingsModal").classList.add("hidden"); toast("Настройки сохранены"); };
 document.querySelectorAll("[data-theme-choice]").forEach(button => button.onclick = () => { appearance.theme = button.dataset.themeChoice; Object.assign(appearance, palettes[appearance.theme]); populateAppearance(); applyAppearance(); }); document.querySelectorAll("[data-density-choice]").forEach(button => button.onclick = () => { appearance.density = button.dataset.densityChoice; applyAppearance(); updateAppearanceLabels(); });
 $("#appearanceAccent").oninput = event => { appearance.accent = event.target.value; applyAppearance(); }; $("#appearanceBackground").oninput = event => { appearance.background = event.target.value; applyAppearance(); }; $("#appearanceSurface").oninput = event => { appearance.surface = event.target.value; applyAppearance(); }; $("#appearanceText").oninput = event => { appearance.text = event.target.value; applyAppearance(); }; $("#appearanceFont").onchange = event => { appearance.fontFamily = event.target.value; applyAppearance(); }; $("#appearanceCustomFont").oninput = event => { appearance.customFont = event.target.value; applyAppearance(); }; $("#appearanceFontScale").oninput = event => { appearance.fontScale = Number(event.target.value); applyAppearance(); updateAppearanceLabels(); }; $("#appearanceOpacity").oninput = event => { appearance.panelOpacity = Number(event.target.value); applyAppearance(); updateAppearanceLabels(); }; $("#appearanceGlass").onchange = event => { appearance.glass = event.target.checked; applyAppearance(); };

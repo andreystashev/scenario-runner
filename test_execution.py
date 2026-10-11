@@ -103,13 +103,18 @@ class ExecutionTests(unittest.TestCase):
         reader = threading.Thread(target=drain, daemon=True)
         reader.start()
         self.addCleanup(lambda: (drain_stop.set(), reader.join(timeout=1)))
+        closer = patch.object(server, "close_mac_terminal", return_value=None)
+        closer.start()
+        self.addCleanup(closer.stop)
         processes = []
         def open_in_pty(title, command):
-            process = subprocess.Popen(["bash", "-lc", command], stdin=slave, stdout=slave, stderr=slave,
+            script_path = self.root / ("terminal-" + "a" * 32 + ".command")
+            script_path.write_text(command + "\n")
+            process = subprocess.Popen(["/bin/bash", str(script_path)], stdin=slave, stdout=slave, stderr=slave,
                                        start_new_session=True,
                                        preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))
             processes.append(process)
-            return None
+            return {"tty": "/dev/ttysTest", "title": "Test [unique]", "script_path": str(script_path)}
         def cleanup():
             server.stop_step(self.workspace, "one")
             for process in processes:
@@ -124,6 +129,9 @@ class ExecutionTests(unittest.TestCase):
         self.assertTrue(finished["terminal_open"])
         self.assertFalse(finished["owned"])
         self.assertIn("terminal-output", finished["log_tail"])
+        # Simulate a PID file removed while the dedicated Terminal shell is alive.
+        server.runtime_file(server.runtime_base("test", "one"), ".shell.pid").unlink()
+        self.assertTrue(server.step_status(self.workspace, self.spec)["terminal_open"])
         server.stop_step(self.workspace, "one")
         self.assertFalse(server.step_status(self.workspace, self.spec)["terminal_open"])
 
@@ -140,11 +148,14 @@ class ExecutionTests(unittest.TestCase):
         command = 'echo "quoted"; printf "\\n"'
         with patch.object(server.sys, "platform", "darwin"), patch.object(server, "run") as run:
             run.return_value = subprocess.CompletedProcess([], 0, "", "")
-            server.open_terminal('Title "with quotes"', command)
+            locator = server.open_terminal('Title "with quotes"', command)
             argv = run.call_args.args[0]
             self.assertEqual(argv[0], "/usr/bin/osascript")
             self.assertNotIn(command, argv[2])
-            self.assertEqual(argv[3], "exec " + server.shlex.join(["bash", "-lc", command]))
+            script_path = Path(locator["script_path"])
+            self.assertEqual(argv[3], "exec /bin/bash " + server.shlex.quote(str(script_path)))
+            self.assertIn(command, script_path.read_text())
+            self.assertNotIn("\n", argv[3])
             self.assertTrue(argv[4].startswith('Title "with quotes" ['))
 
     def test_mac_permission_error_visible(self):
@@ -152,6 +163,24 @@ class ExecutionTests(unittest.TestCase):
             run.return_value = subprocess.CompletedProcess([], 1, "", "Not authorized (-1743)")
             with self.assertRaisesRegex(server.ApiError, "Автоматизация"):
                 server.open_terminal("Test", "echo test")
+
+    def test_terminal_close_failure_preserves_locator_and_retry_button(self):
+        base = server.runtime_base("test", "one")
+        server.remember_terminal(base, {"tty": "/dev/ttys999", "title": "Test [unique]"})
+        with patch.object(server.sys, "platform", "darwin"), patch.object(server, "run") as run:
+            run.return_value = subprocess.CompletedProcess([], 0, "shared", "")
+            with self.assertRaisesRegex(server.ApiError, "другие вкладки"):
+                server.stop_step(self.workspace, "one")
+            self.assertTrue(server.runtime_file(base, ".terminal.json").exists())
+            server.sync_workspace(self.workspace)
+            self.assertTrue(server.step_status(self.workspace, self.spec)["terminal_open"])
+            run.return_value = subprocess.CompletedProcess([], 0, "closed", "")
+            server.stop_step(self.workspace, "one")
+            script = run.call_args.args[0][2]
+            self.assertIn("close runnerWindow", script)
+            self.assertNotIn("close runnerTab", script)
+        self.assertFalse(server.runtime_file(base, ".terminal.json").exists())
+
 
     def test_preset_validation_and_unique_ids(self):
         for step in ({"command": ""}, {"command": "echo ok", "process_match": "["}, "wrong"):

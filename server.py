@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.5.1"
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 CONFIG_DIR = Path(os.getenv("SCENARIO_RUNNER_CONFIG_DIR", "~/.config/scenario-runner")).expanduser()
@@ -327,6 +327,7 @@ def sync_workspace(workspace: dict) -> None:
     workspace.setdefault("variables", {})
     workspace["steps"] = {
         spec["id"]: {
+            **old.get(spec["id"], {}),
             "selected": bool(old.get(spec["id"], {}).get("selected", spec.get("selected", True))),
             "status": str(old.get(spec["id"], {}).get("status") or "idle"),
             "message": str(old.get(spec["id"], {}).get("message") or ""),
@@ -373,6 +374,15 @@ def file_pid(path: Path) -> int | None:
         command = fields[1]
         if re.match(r"(?:\S*/)?bash\s+-lc\s", command) and f"echo $$ > {shlex.quote(str(path))}" in command:
             return value
+        if str(path).endswith(".shell.pid"):
+            locator_path = Path(str(path)[:-10] + ".terminal.json")
+            try:
+                locator = json.loads(locator_path.read_text(encoding="utf-8"))
+                script_path = locator.get("script_path", "")
+                if script_path and command in ("/bin/bash " + script_path, "bash " + script_path):
+                    return value
+            except (OSError, ValueError, AttributeError):
+                pass
         if str(path).endswith(".pid") and not str(path).endswith(".shell.pid"):
             shell_path = Path(str(path)[:-4] + ".shell.pid")
             shell = file_pid(shell_path)
@@ -381,6 +391,22 @@ def file_pid(path: Path) -> int | None:
         return None
     except (OSError, ValueError):
         return None
+
+
+def terminal_script_pid(base: Path) -> int | None:
+    try:
+        locator = json.loads(runtime_file(base, ".terminal.json").read_text(encoding="utf-8"))
+        script_path = locator.get("script_path")
+        if not isinstance(script_path, str) or not script_path:
+            return None
+        result = run(["ps", "-ww", "-axo", "pid=,stat=,command="])
+        for line in result.stdout.splitlines():
+            fields = line.strip().split(None, 2)
+            if len(fields) == 3 and fields[0].isdigit() and not fields[1].startswith("Z") and fields[2] in ("/bin/bash " + script_path, "bash " + script_path):
+                return int(fields[0])
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
 
 
 def tail(path: Path, amount: int = 3000) -> str:
@@ -559,9 +585,11 @@ def step_status(workspace: dict, spec: dict, snapshot: dict | None = None) -> di
             shell_pid = recovered[0] if recovered else None
     else:
         owned_pid = file_pid(runtime_file(base, ".pid"))
-        shell_pid = file_pid(runtime_file(base, ".shell.pid"))
+        shell_pid = file_pid(runtime_file(base, ".shell.pid")) or terminal_script_pid(base)
         rc = read_return_code(str(runtime_file(base, ".rc")))
         log = tail(runtime_file(base, ".log"))
+    if not shell_pid and workspace.get("steps", {}).get(spec["id"], {}).get("terminal_close_error") and runtime_file(base, ".terminal.json").exists():
+        return {"status": "terminal", "message": "Команда остановлена; окно Terminal не закрыто. Повторите закрытие.", "owned": False, "terminal_open": True, "external": False, "return_code": rc, "log_tail": log}
     found_external = bool(external_pids(workspace, spec, snapshot)) if not owned_pid and not shell_pid else False
     if owned_pid:
         return {"status": "running", "message": "Процесс сценария работает", "owned": True, "terminal_open": bool(shell_pid), "external": False, "log_tail": log}
@@ -613,7 +641,11 @@ def open_terminal(title: str, command: str, hold_on_error: bool = False) -> dict
         )
     if sys.platform == "darwin":
         title = title[:120] + " [" + uuid.uuid4().hex[:8] + "]"
-        # Arguments are data, never interpolated into AppleScript source.
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        script_path = RUNTIME_DIR / ("terminal-" + uuid.uuid4().hex + ".command")
+        script_path.write_text("#!/bin/bash\nexport BASH_SILENCE_DEPRECATION_WARNING=1\n" + command + "\n", encoding="utf-8")
+        script_path.chmod(0o600)
+        # Send one short line to the existing login shell; do not reload its profile.
         script = '''on run argv
 tell application "Terminal"
     set runnerTab to do script (item 1 of argv)
@@ -623,12 +655,12 @@ tell application "Terminal"
 end tell
 end run'''
         result = run(["/usr/bin/osascript", "-e", script,
-                      "exec " + shlex.join(["bash", "-lc", command]), title[:140]], timeout=30)
+                      "exec /bin/bash " + shlex.quote(str(script_path)), title[:140]], timeout=10)
         if result.returncode:
             raise ApiError(503, "Не удалось открыть Terminal.app. Разрешите управление Terminal "
                            "в настройках macOS → Конфиденциальность и безопасность → Автоматизация. "
                            + result.stderr.strip())
-        return {"tty": result.stdout.strip(), "title": title}
+        return {"tty": result.stdout.strip(), "title": title, "script_path": str(script_path)}
     terminal = terminal_executable()
     if Path(terminal).name == "gnome-terminal":
         argv = [terminal, "--wait", f"--title={title[:140]}", "--", "bash", "-lc", command]
@@ -654,23 +686,39 @@ def close_mac_terminal(base: Path) -> None:
             return
     except (OSError, ValueError, KeyError, TypeError):
         return
-    # Match both the device and the unique title: TTY devices can be reused.
+    # Terminal only supports closing windows, not tabs. Our launch owns a new
+    # single-tab window; refuse to close it if the user has added another tab.
     script = '''on run argv
  tell application "Terminal"
+    if not running then return "missing"
     repeat with runnerWindow in windows
-        repeat with i from (count of tabs of runnerWindow) to 1 by -1
-            set runnerTab to tab i of runnerWindow
+        repeat with runnerTab in tabs of runnerWindow
             if (tty of runnerTab is (item 1 of argv)) and (custom title of runnerTab is (item 2 of argv)) then
-                if not busy of runnerTab then close runnerTab
-                return
+                if (count of tabs of runnerWindow) is not 1 then return "shared"
+                repeat 40 times
+                    if not busy of runnerTab then
+                        close runnerWindow
+                        return "closed"
+                    end if
+                    delay 0.1
+                end repeat
+                return "busy"
             end if
         end repeat
     end repeat
+    return "missing"
 end tell
 end run'''
-    result = run(["/usr/bin/osascript", "-e", script, tty, title], timeout=5)
-    if result.returncode:
-        LOG.warning("Не удалось закрыть вкладку Terminal: %s", result.stderr.strip())
+    result = run(["/usr/bin/osascript", "-e", script, tty, title], timeout=8)
+    outcome = result.stdout.strip()
+    if result.returncode or outcome not in ("closed", "missing"):
+        message = "В окне сценария есть другие вкладки. Закройте вкладку сценария вручную." if outcome == "shared" else "Не удалось закрыть окно Terminal. Повторите остановку. " + result.stderr.strip()
+        raise ApiError(503, message)
+    script_path = locator.get("script_path")
+    if isinstance(script_path, str):
+        candidate = Path(script_path)
+        if candidate.parent == RUNTIME_DIR and re.fullmatch(r"terminal-[a-f0-9]{32}\.command", candidate.name):
+            candidate.unlink(missing_ok=True)
     path.unlink(missing_ok=True)
 
 
@@ -828,7 +876,7 @@ def stop_step(workspace: dict, step_id: str) -> None:
             if container_terminal_pids(target, prefix):
                 raise ApiError(500, "Терминал сценария остался открыт; повторите остановку")
     else:
-        roots = [file_pid(runtime_file(base, ".pid")), file_pid(runtime_file(base, ".shell.pid"))]
+        roots = [file_pid(runtime_file(base, ".pid")), file_pid(runtime_file(base, ".shell.pid")) or terminal_script_pid(base)]
         targets = []
         for pid in roots:
             if pid:
@@ -843,7 +891,12 @@ def stop_step(workspace: dict, step_id: str) -> None:
                 time.sleep(0.4)
         runtime_file(base, ".pid").unlink(missing_ok=True)
         runtime_file(base, ".shell.pid").unlink(missing_ok=True)
-    close_mac_terminal(base)
+    try:
+        close_mac_terminal(base)
+    except ApiError:
+        workspace["steps"][step_id]["terminal_close_error"] = True
+        raise
+    workspace["steps"][step_id].pop("terminal_close_error", None)
     workspace["steps"][step_id].update(status="stopped", message="Остановлено пользователем")
 
 
@@ -897,6 +950,10 @@ def state_payload() -> dict:
                 if fresh:
                     step["status"] = workspace["steps"][spec["id"]]["status"]
                     step["message"] = workspace["steps"][spec["id"]]["message"]
+                    if step["status"] == "starting":
+                        step["owned"] = False
+                        step["terminal_open"] = False
+                        step.pop("return_code", None)
                     if step["status"] == "stopped":
                         step["owned"] = False
                         step["terminal_open"] = False
