@@ -15,6 +15,7 @@ import shutil
 import signal
 import subprocess
 import threading
+import tempfile
 import time
 import traceback
 import urllib.parse
@@ -106,10 +107,20 @@ def now_iso() -> str:
 
 
 def atomic_json(path: Path, value: Any) -> None:
+    payload = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=f".{path.name}.", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def safe_id(value: str, fallback: str = "item") -> str:
@@ -238,16 +249,45 @@ def load_all() -> None:
         workspaces = [item for item in values if isinstance(item, dict) and item.get("id")]
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         workspaces = []
+    valid_workspaces = []
     for workspace in workspaces:
-        sync_workspace(workspace)
+        try:
+            sync_workspace(workspace)
+        except ApiError as exc:
+            # Keep the original file available for repair; don't rewrite it here.
+            LOG.warning("Панель %s пропущена: %s", workspace.get("id"), exc)
+        else:
+            valid_workspaces.append(workspace)
+    workspaces = valid_workspaces
 
 
 def save_workspaces(changed: dict | None = None) -> None:
+    atomic_json(WORKSPACES_FILE, {"version": 1, "workspaces": workspaces})
+    record_revision(changed)
+
+
+def record_revision(changed: dict | None) -> None:
     global STATE_REVISION
     if changed is not None:
         STATE_REVISION += 1
         WORKSPACE_REVISIONS[str(changed["id"])] = STATE_REVISION
-    atomic_json(WORKSPACES_FILE, {"version": 1, "workspaces": workspaces})
+
+
+def commit_workspace(candidate: dict, previous: dict | None = None) -> None:
+    """Persist a validated configuration before publishing it to live state.
+
+    Call while holding LOCK. This does not roll back launched/stopped processes.
+    """
+    updated = [candidate if item is previous else item for item in workspaces]
+    if previous is None:
+        updated.append(candidate)
+    atomic_json(WORKSPACES_FILE, {"version": 1, "workspaces": updated})
+    if previous is None:
+        workspaces.append(candidate)
+    else:
+        previous.clear()
+        previous.update(candidate)
+    record_revision(candidate)
 
 
 def preset_for(workspace: dict) -> dict:
@@ -798,6 +838,8 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(415, "Для API требуется Content-Type: application/json")
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if length < 0:
+                raise ApiError(400, "Некорректная длина запроса")
             if length > 1024 * 1024:
                 raise ApiError(413, "Слишком большой запрос")
             value = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
@@ -867,9 +909,9 @@ class Handler(BaseHTTPRequestHandler):
                     missing = sorted(required - available)
                     if missing:
                         raise ApiError(409, "Нельзя удалить используемые цели: " + ", ".join(missing))
+                    atomic_json(SETTINGS_FILE, normalized)
                     settings.clear()
                     settings.update(normalized)
-                    atomic_json(SETTINGS_FILE, settings)
                 elif parts == ["api", "presets"]:
                     preset_id = str(body.get("id") or "") or None
                     if preset_id:
@@ -886,8 +928,8 @@ class Handler(BaseHTTPRequestHandler):
                     missing = sorted({step["target_id"] for step in item["steps"]} - available)
                     if missing:
                         raise ApiError(409, "В сценарии выбраны отсутствующие цели: " + ", ".join(missing))
-                    presets[item["id"]] = item
                     atomic_json(PRESETS_DIR / f"{item['id']}.json", item)
+                    presets[item["id"]] = item
                 elif parts == ["api", "workspaces"]:
                     name = str(body.get("name") or "").strip()
                     if not name:
@@ -902,10 +944,10 @@ class Handler(BaseHTTPRequestHandler):
                         "preset_id": preset_id, "created_at": now_iso(), "steps": {},
                     }
                     sync_workspace(workspace)
-                    workspaces.append(workspace)
-                    save_workspaces(workspace)
+                    commit_workspace(workspace)
                 elif len(parts) == 4 and parts[:2] == ["api", "workspaces"] and parts[3] == "update":
-                    workspace = self.workspace(parts[2])
+                    previous = self.workspace(parts[2])
+                    workspace = copy.deepcopy(previous)
                     if "name" in body and str(body["name"]).strip():
                         workspace["name"] = str(body["name"]).strip()[:160]
                     if "bag_path" in body:
@@ -923,14 +965,15 @@ class Handler(BaseHTTPRequestHandler):
                         workspace["preset_id"] = body["preset_id"]
                         workspace["steps"] = {}
                         sync_workspace(workspace)
-                    save_workspaces(workspace)
+                    commit_workspace(workspace, previous)
                 elif len(parts) == 6 and parts[:2] == ["api", "workspaces"] and parts[3] == "steps" and parts[5] == "select":
-                    workspace = self.workspace(parts[2])
+                    previous = self.workspace(parts[2])
+                    workspace = copy.deepcopy(previous)
                     step_id = parts[4]
                     if step_id not in workspace["steps"]:
                         raise ApiError(404, "Команда не найдена")
                     workspace["steps"][step_id]["selected"] = bool(body.get("selected"))
-                    save_workspaces(workspace)
+                    commit_workspace(workspace, previous)
                 elif len(parts) == 6 and parts[:2] == ["api", "workspaces"] and parts[3] == "steps" and parts[5] == "run":
                     workspace = self.workspace(parts[2])
                     launch_step(workspace, parts[4])
@@ -976,21 +1019,25 @@ class Handler(BaseHTTPRequestHandler):
                         state = step_status(workspace, spec)
                         if state["owned"] or state["terminal_open"]:
                             raise ApiError(409, "Сначала завершите команды этой панели")
+                    remaining = [item for item in workspaces if item is not workspace]
+                    atomic_json(WORKSPACES_FILE, {"version": 1, "workspaces": remaining})
                     workspaces.remove(workspace)
-                    save_workspaces()
                 elif len(parts) == 3 and parts[:2] == ["api", "presets"]:
                     preset_id = parts[2]
                     if any(item.get("preset_id") == preset_id for item in workspaces):
                         raise ApiError(409, "Пресет используется панелью")
                     if preset_id not in presets:
                         raise ApiError(404, "Пресет не найден")
-                    presets.pop(preset_id)
                     (PRESETS_DIR / f"{preset_id}.json").unlink(missing_ok=True)
+                    presets.pop(preset_id)
                 else:
                     raise ApiError(404, "Метод API не найден")
             self.json_response(state_payload())
         except ApiError as exc:
             self.json_response({"error": str(exc)}, exc.status)
+        except Exception as exc:
+            LOG.error("Необработанная ошибка: %s\n%s", exc, traceback.format_exc())
+            self.json_response({"error": f"Внутренняя ошибка: {exc}"}, 500)
 
 
 def main() -> None:
