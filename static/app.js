@@ -165,7 +165,10 @@ function editingNow() {
   return Boolean(
     activeOverlay ||
       Date.now() - lastInteractionAt < 600 ||
-      document.activeElement?.matches("input, select, textarea"),
+      window.getSelection()?.isCollapsed === false ||
+      document.activeElement?.matches(
+        "input:not(#searchPanels), select, textarea",
+      ),
   );
 }
 
